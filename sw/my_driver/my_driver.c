@@ -68,11 +68,6 @@ void rx_wq_function(struct work_struct *wk) {
     else if (dw_max_index > 524288) {printk(KERN_INFO "Myd: Something happend and I received an overwritten huge page\n"); goto proccesing_finished;}
     #endif
 
-    int aux;
-    for (aux=0;aux<65;aux++) {
-        printk(KERN_INFO "Myd: DW %d data: 0x%08x\n", aux, current_hp_addr[dw_index+aux]);
-    }
-
     //DW01 to DW31 (both included) are reserved
     dw_index = 32;
 
