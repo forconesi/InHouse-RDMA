@@ -1,8 +1,3 @@
-////////////////////////////////////////////////////////////////////////////
-// Simple driver for InHouse RDMA
-// M.Forconesi (Cambridge Team)
-// April 20014
-////////////////////////////////////////////////////////////////////////////
 
 #include <linux/module.h>       /* Needed by all modules */
 #include <linux/kernel.h>       /* Needed for KERN_INFO */
@@ -11,11 +6,12 @@
 #include <linux/pci.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h> 
+#include <asm/cacheflush.h>
 #include <linux/etherdevice.h>
 #include "my_driver.h"
 
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_AUTHOR("M.Forconesi");
+MODULE_AUTHOR("Cambridge NaaS Team");
 MODULE_DESCRIPTION("A simple approach");	/* What does this module do */
 
 static struct pci_device_id pci_id[] = {
@@ -58,6 +54,7 @@ void rx_wq_function(struct work_struct *wk) {
         pci_dma_sync_single_for_cpu(my_drv_data->pdev, my_drv_data->huge_page2_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
         current_hp_addr = (u32 *)my_drv_data->huge_page_kern_address2;
     }
+    clflush_cache_range(current_hp_addr, 2*1024*1024);
     
     numb_of_qwords = current_hp_addr[0];            //DW0 contains this information
     dw_max_index = (numb_of_qwords << 1) + 32;      // DWs = QWs*2. Header offset
@@ -285,7 +282,7 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
         aux_huge_page = alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
         __free_pages(my_drv_data->huge_page2, HPAGE_PMD_ORDER);
         my_drv_data->huge_page2 = aux_huge_page;
-        if (my_drv_data->huge_page1 == NULL) {printk(KERN_ERR "Myd: alloc huge page in loop\n"); goto err_11;}
+        if (my_drv_data->huge_page2 == NULL) {printk(KERN_ERR "Myd: alloc huge page in loop\n"); goto err_11;}
         my_drv_data->huge_page_kern_address2 = (void *)page_address(my_drv_data->huge_page2);
         my_drv_data->huge_page2_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page2), 2*1024*1024, PCI_DMA_FROMDEVICE);
     }

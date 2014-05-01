@@ -53,6 +53,7 @@ module tlp_trigger (
     reg              change_huge_page_ack_reg;
     reg     [9:0]    commited_rd_address_reg;
     reg              timeout_reg;
+    reg              huge_page_dirty;
 
     assign commited_rd_address_out = commited_rd_address_reg;
     assign commited_wr_address_out = commited_wr_address;
@@ -96,6 +97,7 @@ module tlp_trigger (
             diff <= 10'b0;
             last_diff <= 10'b0;
             qwords_remaining <= 9'b0;
+            huge_page_dirty <= 1'b0;
 
             huge_buffer_qword_counter <= 19'h10;
             look_ahead_huge_buffer_qword_counter <= 19'b0;
@@ -131,14 +133,24 @@ module tlp_trigger (
                     if (diff[8:0] >= 9'h10) begin                                               // greater than or equal to 16 QWORDs == 32 DWORDS == MAX_PAYLOAD_TLP
                         main_fsm <= s1;
                     end
-                    else if ( (qwords_remaining > 9'b0) && (timeout) ) begin
+                    else if ( (huge_page_dirty) && (timeout) ) begin
                         timeout_reg <= 1'b1;
                         main_fsm <= s1;
                     end
+                    else if ( (diff[8:0]) && (timeout) ) begin
+                        main_fsm <= s5;
+                    end
+                end
+
+                s5 : begin
+                    qwords_to_send <= last_diff[8:0];
+                    send_last_tlp_change_huge_page <= 1'b1;
+                    main_fsm <= s4;
                 end
 
                 s1 : begin                                                      // check that the full ethernet frame will fit in the current huge page
                     timeout_reg <= 1'b0;
+                    huge_page_dirty <= 1'b1;
 
                     if ( (look_ahead_huge_buffer_qword_counter[18]) || (timeout_reg) ) begin                    // overflow. no more than 2^18=262144 QW = 2MB in the huge page
                         if (qwords_remaining == 9'b0) begin                   // current eth frame(s) doesn't fit in the current huge_page signal to change it
@@ -185,6 +197,7 @@ module tlp_trigger (
                 s4 : begin
                     huge_buffer_qword_counter <= 19'h10;        // the initial offset of a huge page is 32 DWs which are reserved
                     qwords_remaining <= 9'b0;
+                    huge_page_dirty <= 1'b0;
                     if (change_huge_page_ack_reg) begin
                         send_last_tlp_change_huge_page <= 1'b0;
                         change_huge_page <= 1'b0;

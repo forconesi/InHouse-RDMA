@@ -19,7 +19,6 @@ module mac_rx_interface (
     
     // Internal logic
     output        [9:0]      commited_wr_address,
-	//buffer_overrun_avoidance
     input         [9:0]      rd_addr_extended              //250 MHz domain driven
 
     );
@@ -43,7 +42,7 @@ module mac_rx_interface (
     reg     [9:0]    rd_addr_extended_reg;
     reg     [9:0]    rd_addr_extended_reg0;
     reg     [9:0]    rd_addr_extended_reg1;
-    (* KEEP = "TRUE" *)reg     [9:0]    diff;
+    reg     [9:0]    diff;
     (* KEEP = "TRUE" *)reg     [31:0]   dropped_frames_counter;
     
     reg     [7:0]    rx_data_valid_reg;
