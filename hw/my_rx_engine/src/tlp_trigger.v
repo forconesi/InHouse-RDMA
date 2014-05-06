@@ -137,13 +137,13 @@ module tlp_trigger (
                         timeout_reg <= 1'b1;
                         main_fsm <= s1;
                     end
-                    else if ( (diff[8:0]) && (timeout) ) begin
+                    else if ( (diff[8:0] > 9'b0) && (timeout) ) begin
                         main_fsm <= s5;
                     end
                 end
 
                 s5 : begin
-                    qwords_to_send <= last_diff[8:0];
+                    qwords_to_send <= {5'b0, last_diff[3:0]};
                     send_last_tlp_change_huge_page <= 1'b1;
                     main_fsm <= s4;
                 end

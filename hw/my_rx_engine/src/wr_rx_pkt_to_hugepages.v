@@ -102,9 +102,11 @@ module wr_rx_pkt_to_hugepages (
 
     reg             change_huge_page_reg;
     reg             send_last_tlp_change_huge_page_reg;
+    reg             send_last_tlp_change_huge_page_reg0;
     reg             remember_to_change_huge_page;
     reg     [8:0]   qwords_to_send_reg;
     reg             trigger_tlp_reg;
+    reg             trigger_tlp_reg0;
 
 
     assign reset_n = ~trn_lnk_up_n;
@@ -261,9 +263,11 @@ module wr_rx_pkt_to_hugepages (
             next_tlp_number <= 32'b0;
 
             trigger_tlp_reg <= 1'b0;
+            trigger_tlp_reg0 <= 1'b0;
             qwords_to_send_reg <= 9'b0;
             change_huge_page_reg <= 1'b0;
             send_last_tlp_change_huge_page_reg <= 1'b0;
+            send_last_tlp_change_huge_page_reg0 <= 1'b0;
             remember_to_change_huge_page <= 1'b0;
            
             return_huge_page_to_host <= 1'b0;
@@ -273,9 +277,11 @@ module wr_rx_pkt_to_hugepages (
         else begin  // not reset
 
             trigger_tlp_reg <= trigger_tlp;
+            trigger_tlp_reg0 <= trigger_tlp_reg;        // delay one tick
             qwords_to_send_reg <= qwords_to_send;
             change_huge_page_reg <= change_huge_page;
             send_last_tlp_change_huge_page_reg <= send_last_tlp_change_huge_page;
+            send_last_tlp_change_huge_page_reg0 <= send_last_tlp_change_huge_page_reg;      // delay one tick
 
             case (state)
 
@@ -295,11 +301,11 @@ module wr_rx_pkt_to_hugepages (
                             remember_to_change_huge_page <= 1'b0;
                             state <= s7;
                         end
-                        else if (send_last_tlp_change_huge_page_reg) begin
+                        else if (send_last_tlp_change_huge_page_reg0) begin
                             remember_to_change_huge_page <= 1'b1;
                             state <= s3;
                         end
-                        else if ( trigger_tlp_reg ) begin
+                        else if ( trigger_tlp_reg0 ) begin
                             state <= s3;
                         end
                     end
