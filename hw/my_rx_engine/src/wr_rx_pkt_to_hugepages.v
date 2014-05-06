@@ -335,7 +335,7 @@ module wr_rx_pkt_to_hugepages (
                                 4'b0,   //reserved
                                 1'b0,   //TD (TLP digest present)
                                 1'b0,   //EP (poisoned data)
-                                2'b10,  //Relaxed ordering, No spoon in processor cache
+                                2'b00,  //Relaxed ordering, No spoon in processor cache
                                 2'b0,   //reserved
                                 {qwords_in_tlp, 1'b0}  //lenght in DWs. 10-bit field    // QWs x2 equals DWs
                             };

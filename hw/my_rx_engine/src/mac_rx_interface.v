@@ -88,7 +88,7 @@ module mac_rx_interface (
             rd_addr_extended_reg0 <= rd_addr_extended_reg;
 
             if (rd_addr_extended_reg0 == rd_addr_extended_reg) begin        // transitory off
-                rd_addr_extended_reg1 <= rd_addr_extended_reg;
+                rd_addr_extended_reg1 <= rd_addr_extended_reg0;
             end
 
         end     // not reset
