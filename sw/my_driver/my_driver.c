@@ -42,19 +42,27 @@ void rx_wq_function(struct work_struct *wk) {
     int pkt_counter = 0;
     #endif
 
-    if (!my_drv_data->huge_page_index) {    // Proccess Huge Page 1
-        my_drv_data->huge_page_index = 1;   //toogle index
-        current_hp = 0;
+    if (my_drv_data->huge_page_index == 2) {    // Proccess Huge Page 1
+        current_hp = 1;
         pci_dma_sync_single_for_cpu(my_drv_data->pdev, my_drv_data->huge_page1_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
         current_hp_addr = (u32 *)my_drv_data->huge_page_kern_address1;
     }
-    else {                                  // Proccess Huge Page 2
-        my_drv_data->huge_page_index = 0;   //toogle index
-        current_hp = 1;
+    else if (my_drv_data->huge_page_index == 3) {                                  // Proccess Huge Page 2
+        current_hp = 2;
         pci_dma_sync_single_for_cpu(my_drv_data->pdev, my_drv_data->huge_page2_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
         current_hp_addr = (u32 *)my_drv_data->huge_page_kern_address2;
     }
-    clflush_cache_range(current_hp_addr, 2*1024*1024);
+    else if (my_drv_data->huge_page_index == 4) {                                  // Proccess Huge Page 2
+        current_hp = 3;
+        pci_dma_sync_single_for_cpu(my_drv_data->pdev, my_drv_data->huge_page3_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+        current_hp_addr = (u32 *)my_drv_data->huge_page_kern_address3;
+    }
+    else {                                  // Proccess Huge Page 4
+        current_hp = 4;
+        pci_dma_sync_single_for_cpu(my_drv_data->pdev, my_drv_data->huge_page4_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+        current_hp_addr = (u32 *)my_drv_data->huge_page_kern_address4;
+    }
+    //clflush_cache_range(current_hp_addr, 2*1024*1024);
     
     numb_of_qwords = current_hp_addr[0];            //DW0 contains this information
     dw_max_index = (numb_of_qwords << 1) + 32;      // DWs = QWs*2. Header offset
@@ -112,13 +120,17 @@ proccesing_finished:
     #endif
     
     // Send Memory Write Request TLPs with huge pages' card-lock-up
-    if (!current_hp) {     // Return Huge Page 1
+    if (current_hp == 1) {     // Return Huge Page 1
         pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page1_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
-        *(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef; // send TLP to fpga   
     }
-    else {                 // Return Huge Page 2
+    else if (current_hp == 2) {                 // Return Huge Page 2
         pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page2_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
-        *(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef; // send TLP to fpga
+    }
+    else if (current_hp == 3) {        
+        pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page3_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+    }
+    else {               
+        pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page4_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
     }
 
     //return;
@@ -128,7 +140,28 @@ irqreturn_t card_interrupt_handler(int irq, void *dev_id) {
     struct pci_dev *pdev = dev_id;
     struct my_driver_host_data *my_drv_data = (struct my_driver_host_data *)pci_get_drvdata(pdev);
 
-    queue_work(my_drv_data->rx_wq, (struct work_struct *)&my_drv_data->rx_work);                            //Process Huge Page on kernel thread
+    if (my_drv_data->huge_page_index == 1) {    // Proccess Huge Page 1
+        my_drv_data->huge_page_index = 2;   //toogle index
+        *(((u64 *)my_drv_data->bar2) + 1) = my_drv_data->huge_page3_dma_addr;
+        *(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef;
+    }
+    else if (my_drv_data->huge_page_index == 2){                                  // Proccess Huge Page 2
+        my_drv_data->huge_page_index = 3;   //toogle index
+        *(((u64 *)my_drv_data->bar2) + 2) = my_drv_data->huge_page4_dma_addr;
+        *(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef;
+    }
+    else if (my_drv_data->huge_page_index == 3){                                  // Proccess Huge Page 2
+        my_drv_data->huge_page_index = 4;   //toogle index
+        *(((u64 *)my_drv_data->bar2) + 1) = my_drv_data->huge_page1_dma_addr;
+        *(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef;
+    }
+    else if (my_drv_data->huge_page_index == 4){                                  // Proccess Huge Page 2
+        my_drv_data->huge_page_index = 1;   //toogle index
+        *(((u64 *)my_drv_data->bar2) + 2) = my_drv_data->huge_page2_dma_addr;
+        *(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef;
+    }
+
+    queue_work_on(2, my_drv_data->rx_wq, (struct work_struct *)&my_drv_data->rx_work);                            //Process Huge Page on kernel thread
 
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: Interruption received\n");
@@ -247,13 +280,21 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     if (my_drv_data->huge_page1 == NULL) {printk(KERN_ERR "Myd: alloc huge page\n"); goto err_09;}
     my_drv_data->huge_page2 = alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
     if (my_drv_data->huge_page2 == NULL) {printk(KERN_ERR "Myd: alloc huge page\n"); goto err_10;}
+    my_drv_data->huge_page3 = alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
+    if (my_drv_data->huge_page3 == NULL) {printk(KERN_ERR "Myd: alloc huge page\n"); goto err_11;}
+    my_drv_data->huge_page4 = alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
+    if (my_drv_data->huge_page4 == NULL) {printk(KERN_ERR "Myd: alloc huge page\n"); goto err_12;}
 
     my_drv_data->huge_page_kern_address1 = (void *)page_address(my_drv_data->huge_page1);
     my_drv_data->huge_page_kern_address2 = (void *)page_address(my_drv_data->huge_page2);
+    my_drv_data->huge_page_kern_address3 = (void *)page_address(my_drv_data->huge_page3);
+    my_drv_data->huge_page_kern_address4 = (void *)page_address(my_drv_data->huge_page4);
 
     // Get huge pages' physical address
     my_drv_data->huge_page1_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page1), 2*1024*1024, PCI_DMA_FROMDEVICE);
     my_drv_data->huge_page2_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page2), 2*1024*1024, PCI_DMA_FROMDEVICE);
+    my_drv_data->huge_page3_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page3), 2*1024*1024, PCI_DMA_FROMDEVICE);
+    my_drv_data->huge_page4_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page4), 2*1024*1024, PCI_DMA_FROMDEVICE);
 
     /*#ifdef MY_DEBUG
     memset(my_drv_data->huge_page_kern_address1, 0, 2*1024*1024);
@@ -271,7 +312,7 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
         aux_huge_page = alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
         __free_pages(my_drv_data->huge_page1, HPAGE_PMD_ORDER);
         my_drv_data->huge_page1 = aux_huge_page;
-        if (my_drv_data->huge_page1 == NULL) {printk(KERN_ERR "Myd: alloc huge page in loop\n"); goto err_11;}
+        if (my_drv_data->huge_page1 == NULL) {printk(KERN_ERR "Myd: alloc huge page in loop\n"); goto err_13;}
         my_drv_data->huge_page_kern_address1 = (void *)page_address(my_drv_data->huge_page1);
         my_drv_data->huge_page1_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page1), 2*1024*1024, PCI_DMA_FROMDEVICE);
     }
@@ -282,9 +323,31 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
         aux_huge_page = alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
         __free_pages(my_drv_data->huge_page2, HPAGE_PMD_ORDER);
         my_drv_data->huge_page2 = aux_huge_page;
-        if (my_drv_data->huge_page2 == NULL) {printk(KERN_ERR "Myd: alloc huge page in loop\n"); goto err_11;}
+        if (my_drv_data->huge_page2 == NULL) {printk(KERN_ERR "Myd: alloc huge page in loop\n"); goto err_13;}
         my_drv_data->huge_page_kern_address2 = (void *)page_address(my_drv_data->huge_page2);
         my_drv_data->huge_page2_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page2), 2*1024*1024, PCI_DMA_FROMDEVICE);
+    }
+
+    while ( !(my_drv_data->huge_page3_dma_addr >> 32) ) {
+        printk(KERN_INFO "Myd: ask for a new huge page 3\n");
+        pci_unmap_single(pdev, my_drv_data->huge_page3_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+        aux_huge_page = alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
+        __free_pages(my_drv_data->huge_page3, HPAGE_PMD_ORDER);
+        my_drv_data->huge_page3 = aux_huge_page;
+        if (my_drv_data->huge_page3 == NULL) {printk(KERN_ERR "Myd: alloc huge page in loop\n"); goto err_13;}
+        my_drv_data->huge_page_kern_address3 = (void *)page_address(my_drv_data->huge_page3);
+        my_drv_data->huge_page3_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page3), 2*1024*1024, PCI_DMA_FROMDEVICE);
+    }
+
+    while ( !(my_drv_data->huge_page4_dma_addr >> 32) ) {
+        printk(KERN_INFO "Myd: ask for a new huge page 4\n");
+        pci_unmap_single(pdev, my_drv_data->huge_page4_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+        aux_huge_page = alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
+        __free_pages(my_drv_data->huge_page4, HPAGE_PMD_ORDER);
+        my_drv_data->huge_page4 = aux_huge_page;
+        if (my_drv_data->huge_page4 == NULL) {printk(KERN_ERR "Myd: alloc huge page in loop\n"); goto err_13;}
+        my_drv_data->huge_page_kern_address4 = (void *)page_address(my_drv_data->huge_page4);
+        my_drv_data->huge_page4_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page4), 2*1024*1024, PCI_DMA_FROMDEVICE);
     }
 
     #ifdef MY_DEBUG
@@ -292,6 +355,10 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     printk(KERN_INFO "Myd: huge_page1 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page1_dma_addr >> 32), (int)(u64)my_drv_data->huge_page1_dma_addr);
     printk(KERN_INFO "Myd: huge_page2 kernaddr: 0x%08x %08x\n", (int)((u64)page_address(my_drv_data->huge_page2) >> 32), (int)(u64)page_address(my_drv_data->huge_page2));
     printk(KERN_INFO "Myd: huge_page2 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page2_dma_addr >> 32), (int)(u64)my_drv_data->huge_page2_dma_addr);
+    printk(KERN_INFO "Myd: huge_page3 kernaddr: 0x%08x %08x\n", (int)((u64)page_address(my_drv_data->huge_page3) >> 32), (int)(u64)page_address(my_drv_data->huge_page3));
+    printk(KERN_INFO "Myd: huge_page3 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page3_dma_addr >> 32), (int)(u64)my_drv_data->huge_page3_dma_addr);
+    printk(KERN_INFO "Myd: huge_page4 kernaddr: 0x%08x %08x\n", (int)((u64)page_address(my_drv_data->huge_page4) >> 32), (int)(u64)page_address(my_drv_data->huge_page4));
+    printk(KERN_INFO "Myd: huge_page4 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page4_dma_addr >> 32), (int)(u64)my_drv_data->huge_page4_dma_addr);
     #endif
 
     // Instantiate an ethX interface in linux
@@ -308,11 +375,17 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     *(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef;
     *(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef;
 
+    my_drv_data->huge_page_index = 1;
+
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: my_pcie_probe finished\n");
     #endif
     return ret;
 
+err_13:
+    __free_pages(my_drv_data->huge_page4, HPAGE_PMD_ORDER);
+err_12:
+    __free_pages(my_drv_data->huge_page3, HPAGE_PMD_ORDER);
 err_11:
     __free_pages(my_drv_data->huge_page2, HPAGE_PMD_ORDER);
 err_10:
