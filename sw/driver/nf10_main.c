@@ -12,6 +12,12 @@
 char nf10_driver_name[] = "nf10";
 u64 nf10_test_dev_addr = 0x000f530dd165;
 
+#define DEFAULT_MSG_ENABLE (NETIF_MSG_DRV|NETIF_MSG_PROBE|NETIF_MSG_LINK|NETIF_MSG_IFDOWN|NETIF_MSG_IFUP)
+static int debug = -1;
+module_param(debug, int, 0);
+MODULE_PARM_DESC(debug, "Debug level");
+
+/* DMA engine-dependent functions */
 enum {
 	DMA_LARGE_BUFFER = 1,
 };
@@ -19,10 +25,33 @@ static int dma_version = DMA_LARGE_BUFFER;
 module_param(dma_version, int, 0);
 MODULE_PARM_DESC(dma_version, "nf10 DMA version (1: large buffer)");
 
-#define DEFAULT_MSG_ENABLE (NETIF_MSG_DRV|NETIF_MSG_PROBE|NETIF_MSG_LINK|NETIF_MSG_IFDOWN|NETIF_MSG_IFUP)
-static int debug = -1;
-module_param(debug, int, 0);
-MODULE_PARM_DESC(debug, "Debug level");
+static int nf10_init_buffers(struct pci_dev *pdev)
+{
+	if (dma_version == DMA_LARGE_BUFFER)
+		return nf10_lbuf_init(pdev);
+
+	return -EINVAL;
+}
+
+static int nf10_free_buffers(struct pci_dev *pdev)
+{
+	if (dma_version == DMA_LARGE_BUFFER) {
+		nf10_lbuf_free(pdev);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int nf10_prepare_rx_buffers(struct pci_dev *pdev)
+{
+	if (dma_version == DMA_LARGE_BUFFER) {
+		nf10_lbuf_prepare_rx(pdev);
+		return 0;
+	}
+
+	return -EINVAL;
+}
 
 static int nf10_open(struct net_device *netdev)
 {
@@ -85,25 +114,6 @@ static int nf10_init_phy(struct pci_dev *pdev)
 	free_irq(pdev->irq, pdev);
 
 	return err;
-}
-
-/* DMA engine-dependent functions */
-static int nf10_init_buffers(struct pci_dev *pdev)
-{
-	if (dma_version == DMA_LARGE_BUFFER)
-		return nf10_lbuf_init(pdev);
-
-	return -EINVAL;
-}
-
-static int nf10_free_buffers(struct pci_dev *pdev)
-{
-	if (dma_version == DMA_LARGE_BUFFER) {
-		nf10_lbuf_free(pdev);
-		return 0;
-	}
-
-	return -EINVAL;
 }
 
 int nf10_clean_tx_irq(struct nf10_adapter *adapter)
@@ -198,6 +208,8 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_request_irq;
 	}
 
+	/* FIXME: currently, we assume only one port of nf10. if we use
+	 * all four, allocate netdev for each port (interface) */
 	netdev->netdev_ops = &nf10_netdev_ops;
 	strcpy(netdev->name, "nf%d");
 	memcpy(netdev->dev_addr, &nf10_test_dev_addr, ETH_ALEN);
@@ -213,6 +225,8 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	netif_napi_add(netdev, &adapter->napi, nf10_poll, 64);
 	napi_enable(&adapter->napi);
+
+	nf10_prepare_rx_buffers(pdev);
 
 	netif_info(adapter, probe, netdev, "probe is done successfully\n");
 
@@ -251,8 +265,11 @@ static void nf10_remove(struct pci_dev *pdev)
 
 	netdev = adapter->netdev;
 
+	netif_napi_del(&adapter->napi);
+	napi_disable(&adapter->napi);
 	nf10_free_buffers(pdev);
         unregister_netdev(netdev);
+
 	free_irq(pdev->irq, pdev);
 	pci_disable_msi(pdev);
 	pci_iounmap(pdev, adapter->bar2);

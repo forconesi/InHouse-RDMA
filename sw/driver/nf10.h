@@ -28,4 +28,14 @@ struct nf10_adapter {
 
 extern char nf10_driver_name[];
 
+static inline void nf10_writel(struct nf10_adapter *adapter, int off, u32 val)
+{
+	writel(val, (u32 *)adapter->bar2 + off);
+}
+
+static inline void nf10_writeq(struct nf10_adapter *adapter, int off, u64 val)
+{
+	writeq(val, (u64 *)adapter->bar2 + off);
+}
+
 #endif
