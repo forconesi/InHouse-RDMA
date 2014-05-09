@@ -20,7 +20,6 @@ static void unmap_and_free_lbuf(struct pci_dev *pdev, struct desc *desc)
 
 static int alloc_and_map_lbuf(struct pci_dev *pdev, struct desc *desc)
 {
-	int nr_try = 0;
 retry:
 	if ((desc->page = alloc_lbuf()) == NULL)
 		return -ENOMEM;
@@ -37,14 +36,9 @@ retry:
 	 * not be within 32bit address space. So, this fixup will be removed */
 	if ((desc->dma_addr >> 32) == 0) {
 		unmap_and_free_lbuf(pdev, desc);
-
-		if (nr_try++ < 10) {	/* for safety */
-			pr_err("failed to alloc lbuf over 32bit bus space\n");
-			return -EIO;
-		}
-
 		goto retry;
 	}
+
 	return 0;
 }
 
@@ -55,9 +49,18 @@ int nf10_lbuf_init(struct pci_dev *pdev)
 	int i;
 	int err = 0;
 
-	for (i = 0; i < NR_LBUF; i++)
-		if ((err = alloc_and_map_lbuf(pdev, &lbuf->descs[i])))
+	netif_info(adapter, probe, adapter->netdev,
+		   "[info] lbuf size=%lu bytes\n", LBUF_SIZE);
+
+	for (i = 0; i < NR_LBUF; i++) {
+		struct desc *desc = &lbuf->descs[i];
+		if ((err = alloc_and_map_lbuf(pdev, desc)))
 			break;
+		netif_info(adapter, probe, adapter->netdev,
+			   "lbuf[%d] is allocated at kern_addr=%p/dma_addr=%p",
+			   i, desc->kern_addr, (void *)desc->dma_addr);
+	}
+	
 
 	if (unlikely(err))	/* failed to allocate all lbufs */
 		for (i--; i >= 0; i--)
@@ -72,6 +75,10 @@ void nf10_lbuf_free(struct pci_dev *pdev)
 	struct large_buffer *lbuf = &adapter->lbuf;
 	int i;
 
-	for (i = 0; i < NR_LBUF; i++)
+	for (i = 0; i < NR_LBUF; i++) {
 		unmap_and_free_lbuf(pdev, &lbuf->descs[i]);
+		netif_info(adapter, drv, adapter->netdev,
+			   "lbuf[%d] is freed from kern_addr=%p",
+			   i, lbuf->descs[i].kern_addr);
+	}
 }

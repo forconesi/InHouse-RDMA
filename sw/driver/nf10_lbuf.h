@@ -4,14 +4,15 @@
 #include <linux/types.h>
 #include <linux/pci.h>
 
+/* NR_LBUF is dependent on lbuf DMA engine */
+#define NR_LBUF		2
+
 struct desc {
 	/* FIXME: one of pages and kern_addrs may not be needed */
 	struct page	*page;
 	void		*kern_addr;
 	dma_addr_t	dma_addr;
 };
-/* NR_LBUF is dependent on lbuf DMA engine */
-#define NR_LBUF		4
 struct large_buffer {
 	struct desc descs[NR_LBUF];
 };

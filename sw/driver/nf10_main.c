@@ -19,20 +19,30 @@ static int dma_version = DMA_LARGE_BUFFER;
 module_param(dma_version, int, 0);
 MODULE_PARM_DESC(dma_version, "nf10 DMA version (1: large buffer)");
 
-#define DEFAULT_MSG_ENABLE (NETIF_MSG_DRV|NETIF_MSG_PROBE|NETIF_MSG_LINK)
+#define DEFAULT_MSG_ENABLE (NETIF_MSG_DRV|NETIF_MSG_PROBE|NETIF_MSG_LINK|NETIF_MSG_IFDOWN|NETIF_MSG_IFUP)
 static int debug = -1;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level");
 
 static int nf10_open(struct net_device *netdev)
 {
+	struct nf10_adapter *adapter = netdev_priv(netdev);
+
+	netif_start_queue(netdev);
 	/* TODO */
+
+	netif_info(adapter, ifup, netdev, "open\n");
 	return 0;
 }
 
 static int nf10_close(struct net_device *netdev)
 {
+	struct nf10_adapter *adapter = netdev_priv(netdev);
+
+	netif_stop_queue(netdev);
 	/* TODO */
+
+	netif_info(adapter, ifdown, netdev, "close\n");
 	return 0;
 }
 
@@ -51,9 +61,15 @@ static const struct net_device_ops nf10_netdev_ops = {
 extern irqreturn_t mdio_access_interrupt_handler(int irq, void *dev_id);
 extern int configure_ael2005_phy_chips(struct nf10_adapter *adapter);
 
-irqreturn_t nf10_interrupt_handler(int irq, void *dev_id)
+irqreturn_t nf10_interrupt_handler(int irq, void *data)
 {
-	/* TODO */
+	struct pci_dev *pdev = data;
+	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
+
+	/* TODO: IRQ disable */
+	
+	napi_schedule(&adapter->napi);
+
 	return IRQ_HANDLED;
 }
 
@@ -71,6 +87,7 @@ static int nf10_init_phy(struct pci_dev *pdev)
 	return err;
 }
 
+/* DMA engine-dependent functions */
 static int nf10_init_buffers(struct pci_dev *pdev)
 {
 	if (dma_version == DMA_LARGE_BUFFER)
@@ -87,6 +104,38 @@ static int nf10_free_buffers(struct pci_dev *pdev)
 	}
 
 	return -EINVAL;
+}
+
+int nf10_clean_tx_irq(struct nf10_adapter *adapter)
+{
+	/* TODO */
+	return 1;
+}
+void nf10_process_rx_irq(struct nf10_adapter *adapter, int *work_done, int budget)
+{
+	printk("IRQ delivered\n");
+}
+
+int nf10_poll(struct napi_struct *napi, int budget)
+{       
+	struct nf10_adapter *adapter = 
+		container_of(napi, struct nf10_adapter, napi);
+	int tx_clean_complete, work_done = 0;
+
+	tx_clean_complete = nf10_clean_tx_irq(adapter);
+
+	nf10_process_rx_irq(adapter, &work_done, budget);
+
+	if (!tx_clean_complete)
+		work_done = budget;
+
+	if (work_done < budget) {
+		napi_complete(napi);
+
+		/* TODO: enable IRQ */
+	}
+
+	return work_done;
 }
 
 static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
@@ -116,8 +165,9 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 	SET_NETDEV_DEV(netdev, &pdev->dev);
 
-	pci_set_drvdata(pdev, netdev);
 	adapter = netdev_priv(netdev);
+	pci_set_drvdata(pdev, adapter);
+
 	adapter->netdev = netdev;
 	adapter->pdev = pdev;
 	adapter->msg_enable = netif_msg_init(debug, DEFAULT_MSG_ENABLE);
@@ -130,8 +180,6 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_pci_iomap_bar2;
 	}
 
-	netdev->netdev_ops = &nf10_netdev_ops;
-	strncpy(netdev->name, pci_name(pdev), sizeof(netdev->name) - 1);
 	/* TODO: ethtool & features & watchdog setting */
 
 	if ((err = pci_enable_msi(pdev))) {
@@ -150,24 +198,29 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_request_irq;
 	}
 
+	netdev->netdev_ops = &nf10_netdev_ops;
+	strcpy(netdev->name, "nf%d");
+	memcpy(netdev->dev_addr, &nf10_test_dev_addr, ETH_ALEN);
+	if ((err = register_netdev(netdev))) {
+		pr_err("failed to register netdev\n");
+		goto err_register_netdev;
+	}
+
 	if ((err = nf10_init_buffers(pdev))) {
 		pr_err("failed to initialize packet buffers: err=%d\n", err);
 		goto err_init_buffers;
 	}
 
-	memcpy(adapter->netdev->dev_addr, &nf10_test_dev_addr, ETH_ALEN);
-	if ((err = register_netdev(adapter->netdev))) {
-		pr_err("failed to register netdev\n");
-		goto err_register_netdev;
-	}
+	netif_napi_add(netdev, &adapter->napi, nf10_poll, 64);
+	napi_enable(&adapter->napi);
 
-	pr_info("%s is done successfully\n", __func__);
+	netif_info(adapter, probe, netdev, "probe is done successfully\n");
 
 	return 0;
 
-err_register_netdev:
-	nf10_free_buffers(pdev);
 err_init_buffers:
+	unregister_netdev(netdev);
+err_register_netdev:
 	free_irq(pdev->irq, pdev);
 err_request_irq:
 err_init_phy:
@@ -178,7 +231,9 @@ err_pci_iomap_bar2:
 	pci_iounmap(pdev, adapter->bar0);
 err_pci_iomap_bar0:
 	free_netdev(netdev);
+	pci_set_drvdata(pdev, NULL);
 err_alloc_etherdev:
+	pci_clear_master(pdev);
 	pci_release_regions(pdev);
 err_request_regions:
 err_dma:
@@ -188,7 +243,27 @@ err_dma:
 
 static void nf10_remove(struct pci_dev *pdev)
 {
-	/* TODO */
+	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
+	struct net_device *netdev;
+
+	if (!adapter)
+		return;
+
+	netdev = adapter->netdev;
+
+	nf10_free_buffers(pdev);
+        unregister_netdev(netdev);
+	free_irq(pdev->irq, pdev);
+	pci_disable_msi(pdev);
+	pci_iounmap(pdev, adapter->bar2);
+	pci_iounmap(pdev, adapter->bar0);
+	free_netdev(netdev);
+	pci_set_drvdata(pdev, NULL);
+	pci_clear_master(pdev);
+	pci_release_regions(pdev);
+	pci_disable_device(pdev);
+
+	netif_info(adapter, probe, netdev, "remove is done successfully\n");
 }
 
 static struct pci_device_id pci_id[] = {

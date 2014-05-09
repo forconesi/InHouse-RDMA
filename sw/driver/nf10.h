@@ -9,6 +9,7 @@
 #define NF10_DEVICE_ID	0x4245
 
 struct nf10_adapter {
+	struct napi_struct napi;
 	struct net_device *netdev;
 	struct pci_dev *pdev;
 
