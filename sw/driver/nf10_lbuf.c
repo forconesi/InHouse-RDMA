@@ -65,3 +65,13 @@ int nf10_lbuf_init(struct pci_dev *pdev)
 
 	return err;
 }
+
+void nf10_lbuf_free(struct pci_dev *pdev)
+{
+	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
+	struct large_buffer *lbuf = &adapter->lbuf;
+	int i;
+
+	for (i = 0; i < NR_LBUF; i++)
+		unmap_and_free_lbuf(pdev, &lbuf->descs[i]);
+}

@@ -10,6 +10,7 @@
 #include "nf10.h"
 
 char nf10_driver_name[] = "nf10";
+u64 nf10_test_dev_addr = 0x000f530dd165;
 
 enum {
 	DMA_LARGE_BUFFER = 1,
@@ -74,6 +75,16 @@ static int nf10_init_buffers(struct pci_dev *pdev)
 {
 	if (dma_version == DMA_LARGE_BUFFER)
 		return nf10_lbuf_init(pdev);
+
+	return -EINVAL;
+}
+
+static int nf10_free_buffers(struct pci_dev *pdev)
+{
+	if (dma_version == DMA_LARGE_BUFFER) {
+		nf10_lbuf_free(pdev);
+		return 0;
+	}
 
 	return -EINVAL;
 }
@@ -144,8 +155,18 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_init_buffers;
 	}
 
+	memcpy(adapter->netdev->dev_addr, &nf10_test_dev_addr, ETH_ALEN);
+	if ((err = register_netdev(adapter->netdev))) {
+		pr_err("failed to register netdev\n");
+		goto err_register_netdev;
+	}
+
+	pr_info("%s is done successfully\n", __func__);
+
 	return 0;
 
+err_register_netdev:
+	nf10_free_buffers(pdev);
 err_init_buffers:
 	free_irq(pdev->irq, pdev);
 err_request_irq:

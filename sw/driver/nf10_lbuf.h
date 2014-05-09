@@ -17,5 +17,6 @@ struct large_buffer {
 };
 
 extern int nf10_lbuf_init(struct pci_dev *pdev);
+extern void nf10_lbuf_free(struct pci_dev *pdev);
 
 #endif
