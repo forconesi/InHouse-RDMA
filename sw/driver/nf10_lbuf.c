@@ -156,9 +156,9 @@ next_pkt:
 
 	adapter->netdev->stats.rx_packets += rx_packets;
 
-	netif_info(adapter, rx_status, adapter->netdev,
-		   "RX lbuf delivered nr_qwords=%u # of packets=%u/%lu\n",
-		   nr_qwords, rx_packets, adapter->netdev->stats.rx_packets);
+	netif_dbg(adapter, rx_status, adapter->netdev,
+		  "RX lbuf delivered nr_qwords=%u # of packets=%u/%lu\n",
+		  nr_qwords, rx_packets, adapter->netdev->stats.rx_packets);
 
 	return 0;
 }
