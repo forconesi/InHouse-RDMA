@@ -3,6 +3,7 @@
 
 #include <linux/netdevice.h>
 #include <linux/types.h>
+#include <linux/ethtool.h>
 #include "nf10_lbuf.h"
 
 #define NF10_VENDOR_ID	0x10ee
@@ -26,6 +27,18 @@ struct nf10_adapter {
 	atomic_t mdio_access_rdy;
 };
 
+struct nf10_hw_ops {
+	int		(*init_buffers)(struct pci_dev *pdev);
+	void		(*free_buffers)(struct pci_dev *pdev);
+	int		(*get_napi_budget)(void);
+	void		(*prepare_rx_buffers)(struct pci_dev *pdev);
+	void		(*process_rx_irq)(struct pci_dev *pdev, 
+					  int *work_done, int budget);
+	netdev_tx_t     (*start_xmit)(struct sk_buff *skb, 
+				      struct net_device *dev);
+	int		(*clean_tx_irq)(struct pci_dev *pdev);
+};
+
 extern char nf10_driver_name[];
 
 static inline void nf10_writel(struct nf10_adapter *adapter, int off, u32 val)
@@ -37,5 +50,7 @@ static inline void nf10_writeq(struct nf10_adapter *adapter, int off, u64 val)
 {
 	writeq(val, (u64 *)adapter->bar2 + off);
 }
+
+extern void nf10_set_ethtool_ops(struct net_device *netdev);
 
 #endif

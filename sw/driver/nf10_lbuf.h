@@ -3,6 +3,7 @@
 
 #include <linux/types.h>
 #include <linux/pci.h>
+#include "nf10.h"
 
 /* NR_LBUF is dependent on lbuf DMA engine */
 #define NR_LBUF		2
@@ -25,10 +26,9 @@ struct desc {
 };
 struct large_buffer {
 	struct desc descs[2][NR_LBUF];	/* 0=TX and 1=RX */
+	unsigned int tx_cons;
+	unsigned int rx_cons;
 };
 
-extern int nf10_lbuf_init(struct pci_dev *pdev);
-extern void nf10_lbuf_free(struct pci_dev *pdev);
-extern void nf10_lbuf_prepare_rx(struct pci_dev *pdev);
-
+extern struct nf10_hw_ops *nf10_lbuf_get_hw_ops(void);
 #endif
