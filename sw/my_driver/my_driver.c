@@ -6,6 +6,7 @@
 #include <linux/pci.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h> 
+#include <linux/spinlock.h> 
 #include <asm/cacheflush.h>
 #include <linux/etherdevice.h>
 #include "my_driver.h"
@@ -20,6 +21,8 @@ static struct pci_device_id pci_id[] = {
 };
 MODULE_DEVICE_TABLE(pci, pci_id);
 
+static DEFINE_SPINLOCK(my_lock);
+
 
 // This function process the packets in the standard way that delivers sk_buff to the kernel stack.
 // We could instead deliver the huge page back to user space and process it there.
@@ -33,6 +36,7 @@ void rx_wq_function(struct work_struct *wk) {
     //u32 pkt_ts_nsec;
     int dw_index;
     int dw_max_index;
+    unsigned long interrupt_status;
     u32 *current_hp_addr;
     u8  current_hp;
     u32 pkt_len;
@@ -41,6 +45,8 @@ void rx_wq_function(struct work_struct *wk) {
     #ifdef MY_DEBUG
     int pkt_counter = 0;
     #endif
+
+    spin_lock_irqsave(&my_lock, interrupt_status);
 
     if (my_drv_data->huge_page_index == 2) {    // Proccess Huge Page 1
         current_hp = 1;
@@ -122,16 +128,22 @@ proccesing_finished:
     // Send Memory Write Request TLPs with huge pages' card-lock-up
     if (current_hp == 1) {     // Return Huge Page 1
         pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page1_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+        //atomic_set(&my_drv_data->huge_page1_ready, 1);
     }
     else if (current_hp == 2) {                 // Return Huge Page 2
         pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page2_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+        //atomic_set(&my_drv_data->huge_page2_ready, 1);
     }
     else if (current_hp == 3) {        
         pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page3_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+        //atomic_set(&my_drv_data->huge_page3_ready, 1);
     }
     else {               
         pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page4_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+        //atomic_set(&my_drv_data->huge_page4_ready, 1);
     }
+
+    spin_unlock_irqrestore(&my_lock, interrupt_status);
 
     //return;
 }
@@ -139,29 +151,51 @@ proccesing_finished:
 irqreturn_t card_interrupt_handler(int irq, void *dev_id) {
     struct pci_dev *pdev = dev_id;
     struct my_driver_host_data *my_drv_data = (struct my_driver_host_data *)pci_get_drvdata(pdev);
+    int timeout = 0;
+    int ret;
+
+    do {
+        ret = queue_work(my_drv_data->rx_wq, (struct work_struct *)&my_drv_data->rx_work);                            //Process Huge Page on kernel thread
+        //timeout++;
+    //} while (!ret && (timeout < 100));
+    } while (!ret);
 
     if (my_drv_data->huge_page_index == 1) {    // Proccess Huge Page 1
         my_drv_data->huge_page_index = 2;   //toogle index
-        *(((u64 *)my_drv_data->bar2) + 1) = my_drv_data->huge_page3_dma_addr;
-        *(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef;
+        //if (atomic_read(&my_drv_data->huge_page3_ready)) {
+        //    atomic_set(&my_drv_data->huge_page3_ready, 0);
+            *(((u64 *)my_drv_data->bar2) + 1) = my_drv_data->huge_page3_dma_addr;
+            *(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef;
+       // }
     }
     else if (my_drv_data->huge_page_index == 2){                                  // Proccess Huge Page 2
         my_drv_data->huge_page_index = 3;   //toogle index
-        *(((u64 *)my_drv_data->bar2) + 2) = my_drv_data->huge_page4_dma_addr;
-        *(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef;
+       // if (atomic_read(&my_drv_data->huge_page4_ready)) {
+       //     atomic_set(&my_drv_data->huge_page4_ready, 0);
+            *(((u64 *)my_drv_data->bar2) + 2) = my_drv_data->huge_page4_dma_addr;
+            *(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef;
+      //  }
     }
     else if (my_drv_data->huge_page_index == 3){                                  // Proccess Huge Page 2
         my_drv_data->huge_page_index = 4;   //toogle index
-        *(((u64 *)my_drv_data->bar2) + 1) = my_drv_data->huge_page1_dma_addr;
-        *(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef;
+      //  if (atomic_read(&my_drv_data->huge_page1_ready)) {
+     //       atomic_set(&my_drv_data->huge_page1_ready, 0);
+            *(((u64 *)my_drv_data->bar2) + 1) = my_drv_data->huge_page1_dma_addr;
+            *(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef;
+      //  }
     }
     else if (my_drv_data->huge_page_index == 4){                                  // Proccess Huge Page 2
         my_drv_data->huge_page_index = 1;   //toogle index
-        *(((u64 *)my_drv_data->bar2) + 2) = my_drv_data->huge_page2_dma_addr;
-        *(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef;
+     //   if (atomic_read(&my_drv_data->huge_page2_ready)) {
+     //       atomic_set(&my_drv_data->huge_page2_ready, 0);
+            *(((u64 *)my_drv_data->bar2) + 2) = my_drv_data->huge_page2_dma_addr;
+            *(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef;
+      //  }
     }
 
-    queue_work_on(2, my_drv_data->rx_wq, (struct work_struct *)&my_drv_data->rx_work);                            //Process Huge Page on kernel thread
+    // if (!ret) {
+    //     printk(KERN_INFO "busy\n");
+    // }
 
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: Interruption received\n");
@@ -365,6 +399,10 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     ret = my_linux_network_interface(my_drv_data);
     if (ret) {printk(KERN_ERR "Myd: my_linux_network_interface\n"); goto err_11;}
 
+    atomic_set(&my_drv_data->huge_page1_ready, 0);
+    atomic_set(&my_drv_data->huge_page2_ready, 0);
+    atomic_set(&my_drv_data->huge_page3_ready, 1);
+    atomic_set(&my_drv_data->huge_page4_ready, 1);
     // Ready to start operation
 
     // Send Memory Write Request TLPs with huge pages' address

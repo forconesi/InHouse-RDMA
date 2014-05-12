@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 //`default_nettype none
 
-//`define INSTRUMENTATION 1
+`define INSTRUMENTATION 1
 
 module my_top ( 
     // PCI Express Fabric Interface
@@ -214,71 +214,36 @@ module my_top (
     wire                                              change_huge_page_ack;
     wire                                              change_huge_page;
     wire                                              send_last_tlp_change_huge_page;
-    wire   [8:0]                                      qwords_to_send;
-    wire   [9:0]                                      rd_addr_extended;
+    wire   [4:0]                                      qwords_to_send;
 
+    //-------------------------------------------------------
+    // Local Wires mac_rx_interface
+    //-------------------------------------------------------
+    wire   [9:0]                                      rd_addr_extended;
+    wire                                              rd_addr_change;
 
     ////////////////////////////////////////////////
     // INSTRUMENTATION
     ////////////////////////////////////////////////
     `ifdef INSTRUMENTATION
-    (* KEEP = "TRUE" *)wire   [9:0]                   rd_addr_inst;
-    (* KEEP = "TRUE" *)wire   [9:0]                   wr_addr_inst;
-    (* KEEP = "TRUE" *)reg    [9:0]                   last_rd_addr_inst;
-    (* KEEP = "TRUE" *)reg    [9:0]                   last_wr_addr_inst;
-    (* KEEP = "TRUE" *)reg    [9:0]                   delta_rd_addr_inst;
-    (* KEEP = "TRUE" *)reg    [9:0]                   delta_wr_addr_inst;
-    (* KEEP = "TRUE" *)reg    [9:0]                   free_slots;
-    (* KEEP = "TRUE" *)reg    [9:0]                   last_free_slots;
-    (* KEEP = "TRUE" *)reg    [31:0]                  good_pkts_recv_on_mac_int;
-    (* KEEP = "TRUE" *)reg    [31:0]                  bad_pkts_recv_on_mac_int;
-    (* KEEP = "TRUE" *)reg                            internal_buffer_overrun;
-    (* KEEP = "TRUE" *)reg                            buffer_empty;
+    (* KEEP = "TRUE" *)reg    [31:0]                  good_pkts_recv_on_mac_counter;
+    (* KEEP = "TRUE" *)reg    [31:0]                  bad_pkts_recv_on_mac_counter;
 
     always @( posedge xaui_clk_156_25_out or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
-            good_pkts_recv_on_mac_int <= 32'b0;
-            bad_pkts_recv_on_mac_int <= 32'b0;
-            internal_buffer_overrun <= 1'b0;
-            free_slots <= 10'b0;
-            last_free_slots <= 10'b0;
-            last_rd_addr_inst <= 10'b0;
-            last_wr_addr_inst <= 10'b0;
-            buffer_empty <= 1'b1;
+            good_pkts_recv_on_mac_counter <= 32'b0;
+            bad_pkts_recv_on_mac_counter <= 32'b0;
         end
         
         else begin  // not reset
 
-            free_slots <= rd_addr_inst + (~wr_addr_inst) +1;
-            last_free_slots <= free_slots;
-
-            delta_rd_addr_inst <= rd_addr_inst + (~last_rd_addr_inst) +1;
-            delta_wr_addr_inst <= wr_addr_inst + (~last_wr_addr_inst) +1;
-
-            last_rd_addr_inst <= rd_addr_inst;
-            last_wr_addr_inst <= wr_addr_inst;
-
-            if (rd_addr_inst == wr_addr_inst) begin
-                buffer_empty <= 1'b1;
-            end
-            else begin
-                buffer_empty <= 1'b0;
-            end
-
-            if ( (delta_wr_addr_inst[8:0] > last_free_slots[8:0]) && (!buffer_empty) ) begin
-                internal_buffer_overrun <= 1'b1;
-            end
-            else begin
-                internal_buffer_overrun <= 1'b0;
-            end
-
             if (mac_rx_good_frame) begin
-                good_pkts_recv_on_mac_int <= good_pkts_recv_on_mac_int +1;
+                good_pkts_recv_on_mac_counter <= good_pkts_recv_on_mac_counter +1;
             end
 
             if (mac_rx_bad_frame) begin
-                bad_pkts_recv_on_mac_int <= bad_pkts_recv_on_mac_int +1;
+                bad_pkts_recv_on_mac_counter <= bad_pkts_recv_on_mac_counter +1;
             end
 
         end     // not reset
@@ -479,12 +444,7 @@ module my_top (
         .change_huge_page_ack(change_huge_page_ack),            // I
         .change_huge_page(change_huge_page),                    // O
         .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),        // O
-        .qwords_to_send(qwords_to_send)                         // O [8:0]
-        `ifdef INSTRUMENTATION
-        ,
-        .commited_rd_address_out(rd_addr_inst),                 // O [9:0]
-        .commited_wr_address_out(wr_addr_inst)                  // O [9:0]
-        `endif
+        .qwords_to_send(qwords_to_send)                         // O [4:0]
         );
 
     //assign commited_rd_address = 10'b0;  // debug
@@ -505,6 +465,7 @@ module my_top (
         .wr_data(wr_data),                     // O [63:0]
         .wr_en(wr_en),                         // O
         .commited_wr_address(commited_wr_address),  // O [9:0]
+        .rd_addr_change(rd_addr_change),        // I
         .rd_addr_extended(rd_addr_extended)    // I [9:0]
         );
 
@@ -542,11 +503,12 @@ module my_top (
         .change_huge_page(change_huge_page),                // I
         .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),        // I
         .commited_rd_address(commited_rd_address),          // O [9:0]
-        .qwords_to_send(qwords_to_send),                    // I [8:0]
+        .qwords_to_send(qwords_to_send),                    // I [4:0]
         
         //-------------------------------------------------------
         // To mac_rx_interface
         //-------------------------------------------------------
+        .rd_addr_change(rd_addr_change),                    // O
         .rd_addr_extended(rd_addr_extended),                // O [9:0]
 
         //-------------------------------------------------------

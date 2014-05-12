@@ -43,6 +43,11 @@ struct my_driver_host_data {
     void *huge_page_kern_address3;
     void *huge_page_kern_address4;
 
+    atomic_t huge_page1_ready;
+    atomic_t huge_page2_ready;
+    atomic_t huge_page3_ready;
+    atomic_t huge_page4_ready;
+
     u32 huge_page_index;
 
     #ifdef MY_DEBUG

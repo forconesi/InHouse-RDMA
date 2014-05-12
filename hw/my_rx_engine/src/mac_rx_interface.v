@@ -19,6 +19,7 @@ module mac_rx_interface (
     
     // Internal logic
     output        [9:0]      commited_wr_address,
+    input                    rd_addr_change,               //250 MHz domain driven
     input         [9:0]      rd_addr_extended              //250 MHz domain driven
 
     );
@@ -29,25 +30,35 @@ module mac_rx_interface (
     localparam s2 = 8'b00000010;
     localparam s3 = 8'b00000100;
 
-    // Local wires and reg
+    //-------------------------------------------------------
+    // Local ethernet frame reception and memory write
+    //-------------------------------------------------------
     reg     [7:0]    state;
-    reg     [31:0]   ts_sec;
-    reg     [31:0]   ts_nsec;
-    reg     [27:0]   free_running;
-    
     reg     [31:0]   byte_counter;
     reg     [9:0]    aux_wr_addr;
     reg     [9:0]    start_wr_addr_next_pkt;
     reg     [9:0]    wr_addr_extended;
-    reg     [9:0]    rd_addr_extended_reg;
-    reg     [9:0]    rd_addr_extended_reg0;
-    reg     [9:0]    rd_addr_extended_reg1;
     reg     [9:0]    diff;
     (* KEEP = "TRUE" *)reg     [31:0]   dropped_frames_counter;
     
     reg     [7:0]    rx_data_valid_reg;
     reg              rx_good_frame_reg;
     reg              rx_bad_frame_reg;
+
+    //-------------------------------------------------------
+    // Local ts_sec-and-ts_nsec-generation
+    //-------------------------------------------------------
+    reg     [31:0]   ts_sec;
+    reg     [31:0]   ts_nsec;
+    reg     [27:0]   free_running;
+
+    //-------------------------------------------------------
+    // Local 250 MHz signal synch
+    //-------------------------------------------------------
+    reg              rd_addr_change_reg0;
+    reg              rd_addr_change_reg1;
+    reg     [9:0]    rd_addr_extended_reg0;
+    reg     [9:0]    rd_addr_extended_reg1;
 
     ////////////////////////////////////////////////
     // ts_sec-and-ts_nsec-generation
@@ -78,16 +89,19 @@ module mac_rx_interface (
     always @( posedge clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
-            rd_addr_extended_reg <= 10'b0;
+            rd_addr_change_reg0 <= 1'b0;
+            rd_addr_change_reg1 <= 1'b0;
             rd_addr_extended_reg0 <= 10'b0;
             rd_addr_extended_reg1 <= 10'b0;
         end
         
         else begin  // not reset
-            rd_addr_extended_reg <= rd_addr_extended;
-            rd_addr_extended_reg0 <= rd_addr_extended_reg;
+            rd_addr_change_reg0 <= rd_addr_change;
+            rd_addr_change_reg1 <= rd_addr_change_reg0;
 
-            if (rd_addr_extended_reg0 == rd_addr_extended_reg) begin        // transitory off
+            rd_addr_extended_reg0 <= rd_addr_extended;
+
+            if (rd_addr_change_reg1) begin                                      // transitory off
                 rd_addr_extended_reg1 <= rd_addr_extended_reg0;
             end
 
