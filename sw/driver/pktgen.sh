@@ -1,7 +1,7 @@
 #!/bin/bash
 
 delay=0
-if [ $# -ne 2 ]; then
+if [ $# -lt 2 ]; then
 	echo "Usage: $0 <netif> <packet size> [delay(=$delay)]"
 	exit
 fi
