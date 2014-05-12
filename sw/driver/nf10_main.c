@@ -79,6 +79,9 @@ static int nf10_open(struct net_device *netdev)
 	netif_start_queue(netdev);
 	/* TODO */
 
+	/* FIXME: to test, put the reset of some stats */
+	netdev->stats.rx_packets = 0;
+
 	netif_info(adapter, ifup, netdev, "open\n");
 	return 0;
 }
