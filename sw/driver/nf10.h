@@ -48,12 +48,11 @@ struct nf10_hw_ops {
 };
 
 struct nf10_user_ops {
+	u64		(*init)(struct nf10_adapter *adapter);
 	unsigned long	(*get_pfn)(struct nf10_adapter *adapter, unsigned long arg);
 	void		(*prepare_rx_buffer)(struct nf10_adapter *adapter,
 					     unsigned long arg);
 };
-
-extern char nf10_driver_name[];
 
 static inline void nf10_writel(struct nf10_adapter *adapter, int off, u32 val)
 {

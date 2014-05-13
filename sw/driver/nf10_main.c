@@ -10,7 +10,6 @@
 #include "nf10.h"
 #include "nf10_fops.h"
 
-char nf10_driver_name[] = "nf10";
 u64 nf10_test_dev_addr = 0x000f530dd165;
 
 #define DEFAULT_MSG_ENABLE (NETIF_MSG_DRV|NETIF_MSG_PROBE|NETIF_MSG_LINK|NETIF_MSG_IFDOWN|NETIF_MSG_IFUP|NETIF_MSG_RX_ERR)
@@ -136,7 +135,7 @@ static int nf10_init_phy(struct pci_dev *pdev)
 	int err = 0;
 	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
 	if ((err = request_irq(pdev->irq, mdio_access_interrupt_handler,
-					0, nf10_driver_name, pdev)))
+					0, NF10_DRV_NAME, pdev)))
 		return err;
 	err = configure_ael2005_phy_chips(adapter);
 	free_irq(pdev->irq, pdev);
@@ -181,7 +180,7 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_dma;
 	}
 
-	if ((err = pci_request_regions(pdev, nf10_driver_name)))
+	if ((err = pci_request_regions(pdev, NF10_DRV_NAME)))
 		goto err_request_regions;
 
 	pci_set_master(pdev);
@@ -219,7 +218,7 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	if ((err = request_irq(pdev->irq, nf10_interrupt_handler, 0, 
-					nf10_driver_name, pdev))) {
+					NF10_DRV_NAME, pdev))) {
 		pr_err("failed to request irq%d\n", pdev->irq);
 		goto err_request_irq;
 	}
@@ -331,7 +330,7 @@ static struct pci_error_handlers pcie_err_handlers = {
 };
 
 static struct pci_driver pci_driver = {
-	.name = nf10_driver_name,
+	.name = NF10_DRV_NAME,
 	.id_table = pci_id,
 	.probe = nf10_probe,
 	.remove = nf10_remove,

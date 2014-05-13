@@ -1,12 +1,13 @@
 #ifndef _NF10_LBUF_H
 #define _NF10_LBUF_H
 
+/* NR_LBUF is dependent on lbuf DMA engine */
+#define NR_LBUF		2
+
+#ifdef __KERNEL__
 #include <linux/types.h>
 #include <linux/pci.h>
 #include "nf10.h"
-
-/* NR_LBUF is dependent on lbuf DMA engine */
-#define NR_LBUF		2
 
 /* offset to bar2 address of the card */
 #define RX_LBUF_ADDR_BASE	1
@@ -34,4 +35,6 @@ struct large_buffer {
 struct nf10_adapter;
 extern struct nf10_hw_ops *nf10_lbuf_get_hw_ops(void);
 extern void nf10_lbuf_set_user_ops(struct nf10_adapter *adapter);
+#endif
+
 #endif

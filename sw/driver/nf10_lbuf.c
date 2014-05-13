@@ -3,6 +3,7 @@
 #include "nf10_lbuf.h"
 
 #define LBUF_SIZE	HPAGE_PMD_SIZE
+
 static inline struct page *alloc_lbuf(void)
 {
 	return alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
@@ -90,6 +91,13 @@ static void __nf10_lbuf_free(struct pci_dev *pdev, int rx)
 	}
 }
 
+static void inc_rx_cons(struct nf10_adapter *adapter)
+{
+	adapter->lbuf.rx_cons++;
+	if (adapter->lbuf.rx_cons == NR_LBUF)
+		adapter->lbuf.rx_cons = 0;
+}
+
 static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx)
 {
 	nf10_writeq(adapter, rx_addr_off(idx), 
@@ -98,6 +106,12 @@ static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx
 
 	netif_dbg(adapter, rx_status, adapter->netdev,
 		  "RX lbuf[%lu] is prepared to nf10\n", idx);
+	if (unlikely((unsigned int)idx != adapter->lbuf.rx_cons))
+		netif_warn(adapter, rx_status, adapter->netdev,
+			   "prepared idx(=%lu) mismatches rx_cons=%u\n",
+			   idx, adapter->lbuf.rx_cons);
+
+	inc_rx_cons(adapter);
 }
 
 static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
@@ -222,7 +236,6 @@ static void nf10_lbuf_process_rx_irq(struct pci_dev *pdev,
 				       LBUF_SIZE, PCI_DMA_FROMDEVICE);
 
 	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
-	adapter->lbuf.rx_cons = rx_cons + 1 < NR_LBUF ? rx_cons + 1 : 0;
 	*work_done = 1;
 }
 
@@ -254,19 +267,29 @@ struct nf10_hw_ops *nf10_lbuf_get_hw_ops(void)
 	return &lbuf_hw_ops;
 }
 
+static u64 nf10_lbuf_user_init(struct nf10_adapter *adapter)
+{
+	adapter->nr_user_mmap = 0;
+
+	/* encode the current tx_cons and rx_cons */
+	return ((u64)adapter->lbuf.tx_cons << 32 |
+		adapter->lbuf.rx_cons);
+}
+
 static unsigned long nf10_lbuf_get_pfn(struct nf10_adapter *adapter,
 				       unsigned long arg)
 {
-	/* FIXME: currently, test first for rx, get pfn from rx first */
+	/* FIXME: currently, test first for rx, fetch pfn from rx first */
 	int rx	= ((int)(arg / NR_LBUF) & 0x1) ^ 0x1;
 	int idx	= (int)(arg % NR_LBUF);
 
 	netif_dbg(adapter, drv, adapter->netdev,
 		  "%s: rx=%d, idx=%d, arg=%lu\n", __func__, rx, idx, arg);
-	return page_to_pfn(adapter->lbuf.descs[rx][idx].page);
+	return adapter->lbuf.descs[rx][idx].dma_addr >> PAGE_SHIFT;
 }
 
 static struct nf10_user_ops lbuf_user_ops = {
+	.init			= nf10_lbuf_user_init,
 	.get_pfn		= nf10_lbuf_get_pfn,
 	.prepare_rx_buffer	= nf10_lbuf_prepare_rx,
 };
