@@ -56,9 +56,10 @@ static int __nf10_lbuf_init(struct pci_dev *pdev, int rx)
 		if ((err = alloc_and_map_lbuf(pdev, desc, rx)))
 			break;
 		netif_info(adapter, probe, adapter->netdev,
-			   "%s lbuf[%d] is allocated at kern_addr=%p/dma_addr=%p"
-			   " (size=%lu bytes)\n", rx ? "RX" : "TX", i, 
-			   desc->kern_addr, (void *)desc->dma_addr, LBUF_SIZE);
+			   "%s lbuf[%d] allocated at kern_addr=%p/dma_addr=%p"
+			   " pfn=%lx (size=%lu bytes)\n", rx ? "RX" : "TX", i,
+			   desc->kern_addr, (void *)desc->dma_addr, 
+			   page_to_pfn(desc->page), LBUF_SIZE);
 	}
 	
 
@@ -89,11 +90,14 @@ static void __nf10_lbuf_free(struct pci_dev *pdev, int rx)
 	}
 }
 
-static void __nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, int idx)
+static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx)
 {
 	nf10_writeq(adapter, rx_addr_off(idx), 
 		    adapter->lbuf.descs[RX][idx].dma_addr);
 	nf10_writel(adapter, rx_stat_off(idx), RX_READY);
+
+	netif_dbg(adapter, rx_status, adapter->netdev,
+		  "RX lbuf[%lu] is prepared to nf10\n", idx);
 }
 
 static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
@@ -188,15 +192,13 @@ static int nf10_lbuf_napi_budget(void)
 	return 2;
 }
 
-static void nf10_lbuf_prepare_rx(struct pci_dev *pdev)
+static void nf10_lbuf_prepare_rx_all(struct pci_dev *pdev)
 {
 	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
-	int i;
+	unsigned long i;
 
 	for (i = 0; i < NR_LBUF; i++)
-		__nf10_lbuf_prepare_rx(adapter, i);
-	netif_info(adapter, drv, adapter->netdev, 
-		   "RX buffers are prepared (sent to nf10)\n");
+		nf10_lbuf_prepare_rx(adapter, i);
 }
 
 static void nf10_lbuf_process_rx_irq(struct pci_dev *pdev, 
@@ -219,7 +221,7 @@ static void nf10_lbuf_process_rx_irq(struct pci_dev *pdev,
 	pci_dma_sync_single_for_device(pdev, dma_addr,
 				       LBUF_SIZE, PCI_DMA_FROMDEVICE);
 
-	__nf10_lbuf_prepare_rx(adapter, rx_cons);
+	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
 	adapter->lbuf.rx_cons = rx_cons + 1 < NR_LBUF ? rx_cons + 1 : 0;
 	*work_done = 1;
 }
@@ -241,7 +243,7 @@ static struct nf10_hw_ops lbuf_hw_ops = {
 	.init_buffers		= nf10_lbuf_init,
 	.free_buffers		= nf10_lbuf_free,
 	.get_napi_budget	= nf10_lbuf_napi_budget,
-	.prepare_rx_buffers	= nf10_lbuf_prepare_rx,
+	.prepare_rx_buffers	= nf10_lbuf_prepare_rx_all,
 	.process_rx_irq		= nf10_lbuf_process_rx_irq,
 	.start_xmit		= nf10_lbuf_start_xmit,
 	.clean_tx_irq		= nf10_lbuf_clean_tx_irq
@@ -250,4 +252,26 @@ static struct nf10_hw_ops lbuf_hw_ops = {
 struct nf10_hw_ops *nf10_lbuf_get_hw_ops(void)
 {
 	return &lbuf_hw_ops;
+}
+
+static unsigned long nf10_lbuf_get_pfn(struct nf10_adapter *adapter,
+				       unsigned long arg)
+{
+	/* FIXME: currently, test first for rx, get pfn from rx first */
+	int rx	= ((int)(arg / NR_LBUF) & 0x1) ^ 0x1;
+	int idx	= (int)(arg % NR_LBUF);
+
+	netif_dbg(adapter, drv, adapter->netdev,
+		  "%s: rx=%d, idx=%d, arg=%lu\n", __func__, rx, idx, arg);
+	return page_to_pfn(adapter->lbuf.descs[rx][idx].page);
+}
+
+static struct nf10_user_ops lbuf_user_ops = {
+	.get_pfn		= nf10_lbuf_get_pfn,
+	.prepare_rx_buffer	= nf10_lbuf_prepare_rx,
+};
+
+void nf10_lbuf_set_user_ops(struct nf10_adapter *adapter)
+{
+	adapter->user_ops = &lbuf_user_ops;
 }

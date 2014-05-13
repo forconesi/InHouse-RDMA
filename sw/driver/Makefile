@@ -3,6 +3,7 @@ nf10-objs += ael2005_simple_conf.o
 nf10-objs += nf10_main.o
 nf10-objs += nf10_lbuf.o
 nf10-objs += nf10_ethtool.o
+nf10-objs += nf10_fops.o
 
 ccflags-y += -g -DDEBUG
 

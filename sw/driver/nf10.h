@@ -4,6 +4,8 @@
 #include <linux/netdevice.h>
 #include <linux/types.h>
 #include <linux/ethtool.h>
+#include <linux/pci.h>
+#include <linux/cdev.h>
 #include "nf10_lbuf.h"
 
 #define NF10_VENDOR_ID	0x10ee
@@ -25,6 +27,12 @@ struct nf10_adapter {
 
 	/* for phy chip */
 	atomic_t mdio_access_rdy;
+
+	/* direct user access (kernel bypass) */
+	struct nf10_user_ops *user_ops;
+	struct cdev cdev;
+	unsigned int nr_user_mmap;
+	wait_queue_head_t wq_user_intr;
 };
 
 struct nf10_hw_ops {
@@ -37,6 +45,12 @@ struct nf10_hw_ops {
 	netdev_tx_t     (*start_xmit)(struct sk_buff *skb, 
 				      struct net_device *dev);
 	int		(*clean_tx_irq)(struct pci_dev *pdev);
+};
+
+struct nf10_user_ops {
+	unsigned long	(*get_pfn)(struct nf10_adapter *adapter, unsigned long arg);
+	void		(*prepare_rx_buffer)(struct nf10_adapter *adapter,
+					     unsigned long arg);
 };
 
 extern char nf10_driver_name[];

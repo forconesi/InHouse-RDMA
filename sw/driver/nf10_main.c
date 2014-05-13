@@ -8,6 +8,7 @@
 #include <linux/interrupt.h>
 
 #include "nf10.h"
+#include "nf10_fops.h"
 
 char nf10_driver_name[] = "nf10";
 u64 nf10_test_dev_addr = 0x000f530dd165;
@@ -35,6 +36,12 @@ static int nf10_register_hw_ops(void)
 	if (hw_ops == NULL)
 		return -EINVAL;
 	return 0;
+}
+
+static void nf10_set_user_ops(struct nf10_adapter *adapter)
+{
+	if (dma_mode == DMA_LARGE_BUFFER)
+		nf10_lbuf_set_user_ops(adapter);
 }
 
 static int nf10_init_buffers(struct pci_dev *pdev)
@@ -72,7 +79,7 @@ int nf10_clean_tx_irq(struct nf10_adapter *adapter)
 	return hw_ops->clean_tx_irq(adapter->pdev);
 }
 
-static int nf10_open(struct net_device *netdev)
+static int nf10_up(struct net_device *netdev)
 {
 	struct nf10_adapter *adapter = netdev_priv(netdev);
 
@@ -82,24 +89,24 @@ static int nf10_open(struct net_device *netdev)
 	/* FIXME: to test, put the reset of some stats */
 	netdev->stats.rx_packets = 0;
 
-	netif_info(adapter, ifup, netdev, "open\n");
+	netif_info(adapter, ifup, netdev, "up\n");
 	return 0;
 }
 
-static int nf10_close(struct net_device *netdev)
+static int nf10_down(struct net_device *netdev)
 {
 	struct nf10_adapter *adapter = netdev_priv(netdev);
 
 	netif_stop_queue(netdev);
 	/* TODO */
 
-	netif_info(adapter, ifdown, netdev, "close\n");
+	netif_info(adapter, ifdown, netdev, "down\n");
 	return 0;
 }
 
 static const struct net_device_ops nf10_netdev_ops = {
-	.ndo_open		= nf10_open,
-	.ndo_stop		= nf10_close,
+	.ndo_open		= nf10_up,
+	.ndo_stop		= nf10_down,
 	.ndo_start_xmit		= nf10_start_xmit
 };
 
@@ -112,7 +119,10 @@ irqreturn_t nf10_interrupt_handler(int irq, void *data)
 
 	/* TODO: IRQ disable */
 	
-	napi_schedule(&adapter->napi);
+	if (adapter->nr_user_mmap == 0)
+		napi_schedule(&adapter->napi);
+	else if (waitqueue_active(&adapter->wq_user_intr))
+		wake_up(&adapter->wq_user_intr);
 
 	return IRQ_HANDLED;
 }
@@ -199,7 +209,7 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	if ((err = pci_enable_msi(pdev))) {
-		pr_err("Failed to enable MSI: err=%d\n", err);
+		pr_err("failed to enable MSI: err=%d\n", err);
 		goto err_enable_msi;
 	}
 
@@ -237,6 +247,11 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	nf10_prepare_rx_buffers(pdev);
+
+	/* direct user access */
+	nf10_set_user_ops(adapter);
+	nf10_init_fops(pdev);
+	init_waitqueue_head(&adapter->wq_user_intr);
 
 	netif_napi_add(netdev, &adapter->napi, nf10_poll, nf10_napi_budget());
 	napi_enable(&adapter->napi);
@@ -279,6 +294,7 @@ static void nf10_remove(struct pci_dev *pdev)
 
 	netdev = adapter->netdev;
 
+	nf10_remove_fops(pdev);
 	netif_napi_del(&adapter->napi);
 	napi_disable(&adapter->napi);
 	nf10_free_buffers(pdev);
