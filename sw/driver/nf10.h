@@ -19,9 +19,7 @@ struct nf10_adapter {
 	u8 __iomem *bar0;
 	u8 __iomem *bar2;
 
-	union {
-		struct large_buffer lbuf;
-	};
+	struct nf10_hw_ops *hw_ops;
 
 	u16 msg_enable;
 
@@ -36,15 +34,17 @@ struct nf10_adapter {
 };
 
 struct nf10_hw_ops {
-	int		(*init_buffers)(struct pci_dev *pdev);
-	void		(*free_buffers)(struct pci_dev *pdev);
+	int		(*init)(struct nf10_adapter *adapter);
+	int		(*init_buffers)(struct nf10_adapter *adapter);
+	void		(*free_buffers)(struct nf10_adapter *adapter);
 	int		(*get_napi_budget)(void);
-	void		(*prepare_rx_buffers)(struct pci_dev *pdev);
-	void		(*process_rx_irq)(struct pci_dev *pdev, 
+	void		(*prepare_rx_buffers)(struct nf10_adapter *adapter);
+	void		(*process_rx_irq)(struct nf10_adapter *adapter, 
 					  int *work_done, int budget);
-	netdev_tx_t     (*start_xmit)(struct sk_buff *skb, 
+	netdev_tx_t     (*start_xmit)(struct nf10_adapter *adapter,
+				      struct sk_buff *skb, 
 				      struct net_device *dev);
-	int		(*clean_tx_irq)(struct pci_dev *pdev);
+	int		(*clean_tx_irq)(struct nf10_adapter *adapter);
 };
 
 struct nf10_user_ops {

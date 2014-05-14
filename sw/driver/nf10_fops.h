@@ -8,8 +8,8 @@
 
 #ifdef __KERNEL__
 #include <linux/pci.h>
-extern int nf10_init_fops(struct pci_dev *pdev);
-extern int nf10_remove_fops(struct pci_dev *pdev);
+extern int nf10_init_fops(struct nf10_adapter *adapter);
+extern int nf10_remove_fops(struct nf10_adapter *adapter);
 #endif
 
 #endif

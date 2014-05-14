@@ -94,9 +94,8 @@ static struct file_operations nf10_fops = {
 	.release = nf10_release
 };
 
-int nf10_init_fops(struct pci_dev *pdev)
+int nf10_init_fops(struct nf10_adapter *adapter)
 {
-	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
 	int err;
 
 	if ((err = alloc_chrdev_region(&devno, 0, 1, NF10_DRV_NAME))) {
@@ -118,10 +117,8 @@ int nf10_init_fops(struct pci_dev *pdev)
 	return 0;
 }
 
-int nf10_remove_fops(struct pci_dev *pdev)
+int nf10_remove_fops(struct nf10_adapter *adapter)
 {
-	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
-
 	device_destroy(dev_class, devno);
 	class_unregister(dev_class);
 	class_destroy(dev_class);

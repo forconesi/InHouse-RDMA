@@ -2,6 +2,25 @@
 #include "nf10.h"
 #include "nf10_lbuf.h"
 
+struct desc {
+	/* FIXME: one of pages and kern_addrs may not be needed */
+	struct page	*page;
+	void		*kern_addr;
+	dma_addr_t	dma_addr;
+};
+
+struct large_buffer {
+	struct desc descs[2][NR_LBUF];	/* 0=TX and 1=RX */
+	unsigned int tx_cons;
+	unsigned int rx_cons;
+};
+
+static struct lbuf_hw {
+	struct large_buffer lbuf;
+} lbuf_hw;
+
+#define get_lbuf()	(&lbuf_hw.lbuf)
+
 #define LBUF_SIZE	HPAGE_PMD_SIZE
 
 static inline struct page *alloc_lbuf(void)
@@ -14,23 +33,23 @@ static inline void free_lbuf(struct page *page)
 	__free_pages(page, HPAGE_PMD_ORDER);
 }
 
-static void unmap_and_free_lbuf(struct pci_dev *pdev, struct desc *desc, int rx)
+static void unmap_and_free_lbuf(struct nf10_adapter *adapter, struct desc *desc, int rx)
 {
-	pci_unmap_single(pdev, desc->dma_addr, LBUF_SIZE,
+	pci_unmap_single(adapter->pdev, desc->dma_addr, LBUF_SIZE,
 			rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
 	free_lbuf(desc->page);
 }
 
-static int alloc_and_map_lbuf(struct pci_dev *pdev, struct desc *desc, int rx)
+static int alloc_and_map_lbuf(struct nf10_adapter *adapter, struct desc *desc, int rx)
 {
 retry:
 	if ((desc->page = alloc_lbuf()) == NULL)
 		return -ENOMEM;
 
 	desc->kern_addr = page_address(desc->page);
-	desc->dma_addr = pci_map_single(pdev, desc->kern_addr,
+	desc->dma_addr = pci_map_single(adapter->pdev, desc->kern_addr,
 			LBUF_SIZE, rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
-	if (pci_dma_mapping_error(pdev, desc->dma_addr)) {
+	if (pci_dma_mapping_error(adapter->pdev, desc->dma_addr)) {
 		free_lbuf(desc->page);
 		return -EIO;
 	}
@@ -38,23 +57,22 @@ retry:
 	/* FIXME: due to the current HW constraint, dma bus address should
 	 * not be within 32bit address space. So, this fixup will be removed */
 	if ((desc->dma_addr >> 32) == 0) {
-		unmap_and_free_lbuf(pdev, desc, rx);
+		unmap_and_free_lbuf(adapter, desc, rx);
 		goto retry;
 	}
 
 	return 0;
 }
 
-static int __nf10_lbuf_init(struct pci_dev *pdev, int rx)
+static int __nf10_lbuf_init_buffers(struct nf10_adapter *adapter, int rx)
 {
-	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
-	struct large_buffer *lbuf = &adapter->lbuf;
+	struct large_buffer *lbuf = get_lbuf();
 	int i;
 	int err = 0;
 
 	for (i = 0; i < NR_LBUF; i++) {
 		struct desc *desc = &lbuf->descs[rx][i];
-		if ((err = alloc_and_map_lbuf(pdev, desc, rx)))
+		if ((err = alloc_and_map_lbuf(adapter, desc, rx)))
 			break;
 		netif_info(adapter, probe, adapter->netdev,
 			   "%s lbuf[%d] allocated at kern_addr=%p/dma_addr=%p"
@@ -66,7 +84,7 @@ static int __nf10_lbuf_init(struct pci_dev *pdev, int rx)
 
 	if (unlikely(err))	/* failed to allocate all lbufs */
 		for (i--; i >= 0; i--)
-			unmap_and_free_lbuf(pdev, &lbuf->descs[rx][i], rx);
+			unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
 	else {
 		if (rx)
 			lbuf->rx_cons = 0;
@@ -77,14 +95,13 @@ static int __nf10_lbuf_init(struct pci_dev *pdev, int rx)
 	return err;
 }
 
-static void __nf10_lbuf_free(struct pci_dev *pdev, int rx)
+static void __nf10_lbuf_free_buffers(struct nf10_adapter *adapter, int rx)
 {
-	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
-	struct large_buffer *lbuf = &adapter->lbuf;
+	struct large_buffer *lbuf = get_lbuf();
 	int i;
 
 	for (i = 0; i < NR_LBUF; i++) {
-		unmap_and_free_lbuf(pdev, &lbuf->descs[rx][i], rx);
+		unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
 		netif_info(adapter, drv, adapter->netdev,
 			   "%s lbuf[%d] is freed from kern_addr=%p",
 			   rx ? "RX" : "TX", i, lbuf->descs[rx][i].kern_addr);
@@ -93,23 +110,27 @@ static void __nf10_lbuf_free(struct pci_dev *pdev, int rx)
 
 static void inc_rx_cons(struct nf10_adapter *adapter)
 {
-	adapter->lbuf.rx_cons++;
-	if (adapter->lbuf.rx_cons == NR_LBUF)
-		adapter->lbuf.rx_cons = 0;
+	struct large_buffer *lbuf = get_lbuf();
+
+	lbuf->rx_cons++;
+	if (lbuf->rx_cons == NR_LBUF)
+		lbuf->rx_cons = 0;
 }
 
 static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx)
 {
+	struct large_buffer *lbuf = get_lbuf();
+
 	nf10_writeq(adapter, rx_addr_off(idx), 
-		    adapter->lbuf.descs[RX][idx].dma_addr);
+		    lbuf->descs[RX][idx].dma_addr);
 	nf10_writel(adapter, rx_stat_off(idx), RX_READY);
 
 	netif_dbg(adapter, rx_status, adapter->netdev,
 		  "RX lbuf[%lu] is prepared to nf10\n", idx);
-	if (unlikely((unsigned int)idx != adapter->lbuf.rx_cons))
+	if (unlikely((unsigned int)idx != lbuf->rx_cons))
 		netif_warn(adapter, rx_status, adapter->netdev,
 			   "prepared idx(=%lu) mismatches rx_cons=%u\n",
-			   idx, adapter->lbuf.rx_cons);
+			   idx, lbuf->rx_cons);
 
 	inc_rx_cons(adapter);
 }
@@ -123,7 +144,8 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	u8 bytes_remainder;
 	struct net_device *netdev = adapter->netdev;
 	struct sk_buff *skb;
-	unsigned int rx_cons = adapter->lbuf.rx_cons;
+	struct large_buffer *lbuf = get_lbuf();
+	unsigned int rx_cons = lbuf->rx_cons;
 	unsigned int rx_packets = 0;
 
 	if (nr_qwords == 0 ||
@@ -181,19 +203,55 @@ next_pkt:
 	return 0;
 }
 
-/* nf10_hw_ops functions */
-static int nf10_lbuf_init(struct pci_dev *pdev)
+static u64 nf10_lbuf_user_init(struct nf10_adapter *adapter)
 {
-	/* TODO: TX */
+	struct large_buffer *lbuf = get_lbuf();
 
-	return __nf10_lbuf_init(pdev, 1);	/* RX */
+	adapter->nr_user_mmap = 0;
+
+	/* encode the current tx_cons and rx_cons */
+	return ((u64)lbuf->tx_cons << 32 | lbuf->rx_cons);
 }
 
-static void nf10_lbuf_free(struct pci_dev *pdev)
+static unsigned long nf10_lbuf_get_pfn(struct nf10_adapter *adapter,
+				       unsigned long arg)
+{
+	struct large_buffer *lbuf = get_lbuf();
+	/* FIXME: currently, test first for rx, fetch pfn from rx first */
+	int rx	= ((int)(arg / NR_LBUF) & 0x1) ^ 0x1;
+	int idx	= (int)(arg % NR_LBUF);
+
+	netif_dbg(adapter, drv, adapter->netdev,
+		  "%s: rx=%d, idx=%d, arg=%lu\n", __func__, rx, idx, arg);
+	return lbuf->descs[rx][idx].dma_addr >> PAGE_SHIFT;
+}
+
+static struct nf10_user_ops lbuf_user_ops = {
+	.init			= nf10_lbuf_user_init,
+	.get_pfn		= nf10_lbuf_get_pfn,
+	.prepare_rx_buffer	= nf10_lbuf_prepare_rx,
+};
+
+/* nf10_hw_ops functions */
+static int nf10_lbuf_init(struct nf10_adapter *adapter)
+{
+	adapter->user_ops = &lbuf_user_ops;
+
+	return 0;
+}
+
+static int nf10_lbuf_init_buffers(struct nf10_adapter *adapter)
 {
 	/* TODO: TX */
 
-	__nf10_lbuf_free(pdev, 1);		/* RX */
+	return __nf10_lbuf_init_buffers(adapter, 1);	/* RX */
+}
+
+static void nf10_lbuf_free_buffers(struct nf10_adapter *adapter)
+{
+	/* TODO: TX */
+
+	__nf10_lbuf_free_buffers(adapter, 1);		/* RX */
 }
 
 static int nf10_lbuf_napi_budget(void)
@@ -206,55 +264,56 @@ static int nf10_lbuf_napi_budget(void)
 	return 2;
 }
 
-static void nf10_lbuf_prepare_rx_all(struct pci_dev *pdev)
+static void nf10_lbuf_prepare_rx_all(struct nf10_adapter *adapter)
 {
-	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
 	unsigned long i;
 
 	for (i = 0; i < NR_LBUF; i++)
 		nf10_lbuf_prepare_rx(adapter, i);
 }
 
-static void nf10_lbuf_process_rx_irq(struct pci_dev *pdev, 
+static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter, 
 				     int *work_done, int budget)
 {
-	struct nf10_adapter *adapter = pci_get_drvdata(pdev);
-	struct desc *rx_descs = adapter->lbuf.descs[RX];
-	unsigned int rx_cons = adapter->lbuf.rx_cons;
+	struct large_buffer *lbuf = get_lbuf();
+	struct desc *rx_descs = lbuf->descs[RX];
+	unsigned int rx_cons = lbuf->rx_cons;
 	dma_addr_t dma_addr;
 	void *kern_addr;
 
 	dma_addr = rx_descs[rx_cons].dma_addr;
 	kern_addr = rx_descs[rx_cons].kern_addr;
 
-	pci_dma_sync_single_for_cpu(pdev, dma_addr,
+	pci_dma_sync_single_for_cpu(adapter->pdev, dma_addr,
 				    LBUF_SIZE, PCI_DMA_FROMDEVICE);
 
 	/* currently, just process one large buffer, regardless of budget */
 	nf10_lbuf_deliver_skbs(adapter, kern_addr);
-	pci_dma_sync_single_for_device(pdev, dma_addr,
+	pci_dma_sync_single_for_device(adapter->pdev, dma_addr,
 				       LBUF_SIZE, PCI_DMA_FROMDEVICE);
 
 	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
 	*work_done = 1;
 }
 
-static netdev_tx_t nf10_lbuf_start_xmit(struct sk_buff *skb,
+static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
+					struct sk_buff *skb,
 					struct net_device *dev)
 {
 	/* TODO */
 	return NETDEV_TX_BUSY;
 }
 
-static int nf10_lbuf_clean_tx_irq(struct pci_dev *pdev)
+static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
 {
 	/* TODO */
 	return 1;
 }
 
 static struct nf10_hw_ops lbuf_hw_ops = {
-	.init_buffers		= nf10_lbuf_init,
-	.free_buffers		= nf10_lbuf_free,
+	.init			= nf10_lbuf_init,
+	.init_buffers		= nf10_lbuf_init_buffers,
+	.free_buffers		= nf10_lbuf_free_buffers,
 	.get_napi_budget	= nf10_lbuf_napi_budget,
 	.prepare_rx_buffers	= nf10_lbuf_prepare_rx_all,
 	.process_rx_irq		= nf10_lbuf_process_rx_irq,
@@ -262,39 +321,7 @@ static struct nf10_hw_ops lbuf_hw_ops = {
 	.clean_tx_irq		= nf10_lbuf_clean_tx_irq
 };
 
-struct nf10_hw_ops *nf10_lbuf_get_hw_ops(void)
+void nf10_lbuf_set_hw_ops(struct nf10_adapter *adapter)
 {
-	return &lbuf_hw_ops;
-}
-
-static u64 nf10_lbuf_user_init(struct nf10_adapter *adapter)
-{
-	adapter->nr_user_mmap = 0;
-
-	/* encode the current tx_cons and rx_cons */
-	return ((u64)adapter->lbuf.tx_cons << 32 |
-		adapter->lbuf.rx_cons);
-}
-
-static unsigned long nf10_lbuf_get_pfn(struct nf10_adapter *adapter,
-				       unsigned long arg)
-{
-	/* FIXME: currently, test first for rx, fetch pfn from rx first */
-	int rx	= ((int)(arg / NR_LBUF) & 0x1) ^ 0x1;
-	int idx	= (int)(arg % NR_LBUF);
-
-	netif_dbg(adapter, drv, adapter->netdev,
-		  "%s: rx=%d, idx=%d, arg=%lu\n", __func__, rx, idx, arg);
-	return adapter->lbuf.descs[rx][idx].dma_addr >> PAGE_SHIFT;
-}
-
-static struct nf10_user_ops lbuf_user_ops = {
-	.init			= nf10_lbuf_user_init,
-	.get_pfn		= nf10_lbuf_get_pfn,
-	.prepare_rx_buffer	= nf10_lbuf_prepare_rx,
-};
-
-void nf10_lbuf_set_user_ops(struct nf10_adapter *adapter)
-{
-	adapter->user_ops = &lbuf_user_ops;
+	adapter->hw_ops = &lbuf_hw_ops;
 }

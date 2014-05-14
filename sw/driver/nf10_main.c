@@ -25,57 +25,55 @@ static int dma_mode = DMA_LARGE_BUFFER;
 module_param(dma_mode, int, 0);
 MODULE_PARM_DESC(dma_mode, "nf10 DMA version (0: large buffer)");
 
-static struct nf10_hw_ops *hw_ops;
-
-static int nf10_register_hw_ops(void)
+static int nf10_init(struct nf10_adapter *adapter)
 {
 	if (dma_mode == DMA_LARGE_BUFFER)
-		hw_ops = nf10_lbuf_get_hw_ops();
-
-	if (hw_ops == NULL)
+		nf10_lbuf_set_hw_ops(adapter);
+	else
 		return -EINVAL;
-	return 0;
+
+	if (unlikely(adapter->hw_ops == NULL))
+		return -EINVAL;
+
+	return adapter->hw_ops->init(adapter);
 }
 
-static void nf10_set_user_ops(struct nf10_adapter *adapter)
+static int nf10_init_buffers(struct nf10_adapter *adapter)
 {
-	if (dma_mode == DMA_LARGE_BUFFER)
-		nf10_lbuf_set_user_ops(adapter);
+	return adapter->hw_ops->init_buffers(adapter);
 }
 
-static int nf10_init_buffers(struct pci_dev *pdev)
+static void nf10_free_buffers(struct nf10_adapter *adapter)
 {
-	return hw_ops->init_buffers(pdev);
+	adapter->hw_ops->free_buffers(adapter);
 }
 
-static void nf10_free_buffers(struct pci_dev *pdev)
+static int nf10_napi_budget(struct nf10_adapter *adapter)
 {
-	hw_ops->free_buffers(pdev);
+	return adapter->hw_ops->get_napi_budget();
 }
 
-static int nf10_napi_budget(void)
+static void nf10_prepare_rx_buffers(struct nf10_adapter *adapter)
 {
-	return hw_ops->get_napi_budget();
-}
-
-static void nf10_prepare_rx_buffers(struct pci_dev *pdev)
-{
-	hw_ops->prepare_rx_buffers(pdev);
+	adapter->hw_ops->prepare_rx_buffers(adapter);
 }
 
 void nf10_process_rx_irq(struct nf10_adapter *adapter, int *work_done, int budget)
 {
-	hw_ops->process_rx_irq(adapter->pdev, work_done, budget);
+	adapter->hw_ops->process_rx_irq(adapter, work_done, budget);
 }
 
-static netdev_tx_t nf10_start_xmit(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t nf10_start_xmit(struct sk_buff *skb,
+				   struct net_device *netdev)
 {
-	return hw_ops->start_xmit(skb, dev);
+	struct nf10_adapter *adapter = netdev_priv(netdev);
+
+	return adapter->hw_ops->start_xmit(adapter, skb, netdev);
 }
 
 int nf10_clean_tx_irq(struct nf10_adapter *adapter)
 {
-	return hw_ops->clean_tx_irq(adapter->pdev);
+	return adapter->hw_ops->clean_tx_irq(adapter);
 }
 
 static int nf10_up(struct net_device *netdev)
@@ -235,24 +233,24 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_register_netdev;
 	}
 
-	if ((err = nf10_register_hw_ops())) {
+	if ((err = nf10_init(adapter))) {
 		pr_err("failed to register hw ops\n");
 		goto err_register_hw_ops;
 	}
 
-	if ((err = nf10_init_buffers(pdev))) {
+	if ((err = nf10_init_buffers(adapter))) {
 		pr_err("failed to initialize packet buffers: err=%d\n", err);
 		goto err_init_buffers;
 	}
 
-	nf10_prepare_rx_buffers(pdev);
+	nf10_prepare_rx_buffers(adapter);
 
 	/* direct user access */
-	nf10_set_user_ops(adapter);
-	nf10_init_fops(pdev);
+	nf10_init_fops(adapter);
 	init_waitqueue_head(&adapter->wq_user_intr);
 
-	netif_napi_add(netdev, &adapter->napi, nf10_poll, nf10_napi_budget());
+	netif_napi_add(netdev, &adapter->napi, nf10_poll,
+		       nf10_napi_budget(adapter));
 	napi_enable(&adapter->napi);
 
 	netif_info(adapter, probe, netdev, "probe is done successfully\n");
@@ -293,10 +291,10 @@ static void nf10_remove(struct pci_dev *pdev)
 
 	netdev = adapter->netdev;
 
-	nf10_remove_fops(pdev);
+	nf10_remove_fops(adapter);
 	netif_napi_del(&adapter->napi);
 	napi_disable(&adapter->napi);
-	nf10_free_buffers(pdev);
+	nf10_free_buffers(adapter);
         unregister_netdev(netdev);
 
 	free_irq(pdev->irq, pdev);
