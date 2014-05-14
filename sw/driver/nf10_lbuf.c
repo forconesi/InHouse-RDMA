@@ -16,10 +16,16 @@ struct large_buffer {
 };
 
 static struct lbuf_hw {
+	struct nf10_adapter *adapter;
 	struct large_buffer lbuf;
-} lbuf_hw;
 
+	struct sk_buff_head rxq;
+	struct workqueue_struct *rx_wq;
+	struct work_struct rx_work;
+} lbuf_hw;
 #define get_lbuf()	(&lbuf_hw.lbuf)
+#define get_rxq()	(&lbuf_hw.rxq)
+#define get_rx_work()	(&lbuf_hw.rx_work)
 
 #define LBUF_SIZE	HPAGE_PMD_SIZE
 
@@ -137,6 +143,15 @@ static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx
 	inc_rx_cons(adapter);
 }
 
+static void nf10_lbuf_rx_worker(struct work_struct *work)
+{
+	struct nf10_adapter *adapter = lbuf_hw.adapter;
+	struct sk_buff *skb;
+
+	while((skb = skb_dequeue(get_rxq())))
+		napi_gro_receive(&adapter->napi, skb);
+}
+
 static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 {
 	u32 *lbuf_addr = kern_addr;	/* 32bit pointer */
@@ -184,8 +199,9 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		skb->protocol = eth_type_trans(skb, adapter->netdev);
 		skb->ip_summed = CHECKSUM_NONE;
 
-		napi_gro_receive(&adapter->napi, skb);
-		
+		skb_queue_tail(get_rxq(), skb);
+		queue_work(lbuf_hw.rx_wq, get_rx_work());
+
 		rx_packets++;
 next_pkt:
 		dword_idx += pkt_len >> 2;	/* byte -> dword */
@@ -237,6 +253,17 @@ static struct nf10_user_ops lbuf_user_ops = {
 /* nf10_hw_ops functions */
 static int nf10_lbuf_init(struct nf10_adapter *adapter)
 {
+	lbuf_hw.adapter = adapter;
+
+	skb_queue_head_init(get_rxq());
+	INIT_WORK(get_rx_work(), nf10_lbuf_rx_worker);
+	lbuf_hw.rx_wq = alloc_workqueue("lbuf_rx", WQ_MEM_RECLAIM, 0);
+	if (lbuf_hw.rx_wq == NULL) {
+		netif_err(adapter, rx_err, adapter->netdev,
+			  "failed to alloc lbuf rx workqueue\n");
+		return -ENOMEM;
+	}
+
 	adapter->user_ops = &lbuf_user_ops;
 
 	return 0;
@@ -244,6 +271,8 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 
 static void nf10_lbuf_free(struct nf10_adapter *adapter)
 {
+	skb_queue_purge(get_rxq());
+	destroy_workqueue(lbuf_hw.rx_wq);
 }
 
 static int nf10_lbuf_init_buffers(struct nf10_adapter *adapter)
