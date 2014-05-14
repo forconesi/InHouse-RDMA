@@ -38,6 +38,11 @@ static int nf10_init(struct nf10_adapter *adapter)
 	return adapter->hw_ops->init(adapter);
 }
 
+static void nf10_free(struct nf10_adapter *adapter)
+{
+	adapter->hw_ops->free(adapter);
+}
+
 static int nf10_init_buffers(struct nf10_adapter *adapter)
 {
 	return adapter->hw_ops->init_buffers(adapter);
@@ -200,6 +205,7 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		err = -EIO;
 		goto err_pci_iomap_bar0;
 	}
+
 	if ((adapter->bar2 = pci_iomap(pdev, 2, 0)) == NULL) {
 		err = -EIO;
 		goto err_pci_iomap_bar2;
@@ -258,6 +264,7 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	return 0;
 
 err_init_buffers:
+	nf10_free(adapter);
 err_register_hw_ops:
 	unregister_netdev(netdev);
 err_register_netdev:
@@ -295,6 +302,7 @@ static void nf10_remove(struct pci_dev *pdev)
 	netif_napi_del(&adapter->napi);
 	napi_disable(&adapter->napi);
 	nf10_free_buffers(adapter);
+	nf10_free(adapter);
         unregister_netdev(netdev);
 
 	free_irq(pdev->irq, pdev);

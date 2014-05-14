@@ -33,14 +33,16 @@ static inline void free_lbuf(struct page *page)
 	__free_pages(page, HPAGE_PMD_ORDER);
 }
 
-static void unmap_and_free_lbuf(struct nf10_adapter *adapter, struct desc *desc, int rx)
+static void unmap_and_free_lbuf(struct nf10_adapter *adapter,
+				struct desc *desc, int rx)
 {
 	pci_unmap_single(adapter->pdev, desc->dma_addr, LBUF_SIZE,
 			rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
 	free_lbuf(desc->page);
 }
 
-static int alloc_and_map_lbuf(struct nf10_adapter *adapter, struct desc *desc, int rx)
+static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
+			      struct desc *desc, int rx)
 {
 retry:
 	if ((desc->page = alloc_lbuf()) == NULL)
@@ -240,6 +242,10 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 	return 0;
 }
 
+static void nf10_lbuf_free(struct nf10_adapter *adapter)
+{
+}
+
 static int nf10_lbuf_init_buffers(struct nf10_adapter *adapter)
 {
 	/* TODO: TX */
@@ -312,6 +318,7 @@ static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
 
 static struct nf10_hw_ops lbuf_hw_ops = {
 	.init			= nf10_lbuf_init,
+	.free			= nf10_lbuf_free,
 	.init_buffers		= nf10_lbuf_init_buffers,
 	.free_buffers		= nf10_lbuf_free_buffers,
 	.get_napi_budget	= nf10_lbuf_napi_budget,

@@ -35,6 +35,7 @@ struct nf10_adapter {
 
 struct nf10_hw_ops {
 	int		(*init)(struct nf10_adapter *adapter);
+	void		(*free)(struct nf10_adapter *adapter);
 	int		(*init_buffers)(struct nf10_adapter *adapter);
 	void		(*free_buffers)(struct nf10_adapter *adapter);
 	int		(*get_napi_budget)(void);
