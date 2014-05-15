@@ -2,7 +2,6 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 
 `define TX_MEM_WR64_FMT_TYPE 7'b11_00000
-`define MAX_HUGE_PAGE_OFFSET 64'h100000 // 1MB change this to 2MB 1GB
 
 module wr_rx_pkt_to_hugepages (
 
@@ -20,6 +19,9 @@ module wr_rx_pkt_to_hugepages (
     input       [15:0]     cfg_completer_id,
     output reg             cfg_interrupt_n,
     input                  cfg_interrupt_rdy_n,
+
+    input       [63:0]     msi_message_addr_reg,
+    input       [15:0]     msi_message_data_reg,
 
     // Internal logic
 
@@ -101,7 +103,6 @@ module wr_rx_pkt_to_hugepages (
 
     reg     [8:0]   tlp_qword_counter;
     reg     [9:0]   next_rd_address;
-    reg     [9:0]   recovery_commited_rd_address;
     reg     [31:0]  tlp_number;
     reg     [31:0]  look_ahead_tlp_number;
     reg     [8:0]   qwords_in_tlp;
@@ -109,11 +110,12 @@ module wr_rx_pkt_to_hugepages (
     reg     [63:0]  look_ahead_host_mem_addr;
     reg     [31:0]  huge_page_qword_counter;
     reg     [31:0]  look_ahead_huge_page_qword_counter;
-    reg             endpoint_not_ready_startover;
-    reg             tlp_retry;
+    reg             endpoint_not_ready;
     reg     [9:0]   rd_addr_extended;
     reg             remember_to_change_huge_page;
     reg             rd_addr_change_internal;
+    reg     [9:0]   rd_addr_extended_prev1;
+    reg     [9:0]   rd_addr_extended_prev2;
     
     assign reset_n = ~trn_lnk_up_n;
 
@@ -290,14 +292,13 @@ module wr_rx_pkt_to_hugepages (
         if (!reset_n ) begin  // reset
             
             trn_td <= 64'b0;
-            trn_trem_n <= 8'b0;
+            trn_trem_n <= 8'hFF;
             trn_tsof_n <= 1'b1;
             trn_teof_n <= 1'b1;
             trn_tsrc_rdy_n <= 1'b1;
             cfg_interrupt_n <= 1'b1;
 
-            endpoint_not_ready_startover <= 1'b0;
-            tlp_retry <= 1'b0;
+            endpoint_not_ready <= 1'b0;
 
             trigger_tlp_ack_internal <= 1'b0;                // must be active for 2 or 3 clks in 250 MHz domain
 
@@ -325,6 +326,8 @@ module wr_rx_pkt_to_hugepages (
         else begin  // not reset
 
             rd_addr_change_internal <= 1'b0;                     // default value. Used to signal a change in commited_rd_address_to_mac to other clock domain
+            rd_addr_extended_prev1 <= rd_addr_extended;
+            rd_addr_extended_prev2 <= rd_addr_extended_prev1;
 
             case (state)
 
@@ -342,14 +345,14 @@ module wr_rx_pkt_to_hugepages (
                     if ( (trn_tbuf_av[1]) && (!trn_tdst_rdy_n) ) begin          // credits available and endpointready
                         if (change_huge_page_reg1 || remember_to_change_huge_page) begin                         // previous module wants to change huge page
                             remember_to_change_huge_page <= 1'b0;
-                            state <= s7;
+                            state <= s8;
                         end
                         else if (send_last_tlp_change_huge_page_reg1) begin
                             remember_to_change_huge_page <= 1'b1;
-                            state <= s3;
+                            state <= s2;
                         end
                         else if ( trigger_tlp_reg1 ) begin
-                            state <= s3;
+                            state <= s2;
                         end
                     end
 
@@ -359,24 +362,15 @@ module wr_rx_pkt_to_hugepages (
                     rd_addr_extended <= commited_rd_address;                            // Address the internal buffer with the last position of the rd pointer
 
                     qwords_in_tlp <= {4'b0, qwords_to_send_reg1};
-                    recovery_commited_rd_address <= commited_rd_address;
                     next_rd_address <= commited_rd_address + qwords_to_send_reg1;
 
-                    endpoint_not_ready_startover <= 1'b0;
-                    tlp_retry <= 1'b0;
+                    endpoint_not_ready <= 1'b0;
 
                     trn_td <= 64'b0;
                 end
 
                 s2 : begin
-                    endpoint_not_ready_startover <= 1'b0;
-                    tlp_retry <= 1'b1;
-                    if ( (trn_tbuf_av[1]) && (!trn_tdst_rdy_n) ) begin
-                        state <= s3;
-                    end
-                end
-
-                s3 : begin
+                    trn_trem_n <= 8'b0;
                     trn_td[63:32] <= {
                                 1'b0,   //reserved
                                 `TX_MEM_WR64_FMT_TYPE, //memory write request 64bit addressing
@@ -404,61 +398,81 @@ module wr_rx_pkt_to_hugepages (
                     look_ahead_tlp_number <= tlp_number +1;
 
                     commited_rd_address <= next_rd_address;                                                             // To iform trigger module in advance so starts the calculation
-                    state <= s4;
+                    state <= s3;
                 end
 
-                s4 : begin
-                    rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
+                s3 : begin
                     if (!trn_tdst_rdy_n) begin
                         trn_tsof_n <= 1'b1;
+                        trn_tsrc_rdy_n <= 1'b0;
                         trn_td <= host_mem_addr;
-                        if (!tlp_retry) begin
-                            trigger_tlp_ack_internal <= 1'b1;                                       // ACK only once
+                        trigger_tlp_ack_internal <= 1'b1;
+
+                        if (!endpoint_not_ready) begin
+                            rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
+                            state <= s4;
                         end
-                        state <= s5;
-                    end
-                    else begin
-                        endpoint_not_ready_startover <= 1'b1;
-                    end
-                    tlp_qword_counter <= 9'b1;
-                end
-
-                s5 : begin
-                    trigger_tlp_ack_internal <= 1'b0;
-
-                    rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
-                                   
-                    trn_td <= {rd_data[7:0], rd_data[15:8], rd_data[23:16], rd_data[31:24], rd_data[39:32], rd_data[47:40], rd_data[55:48] ,rd_data[63:56]};    // DW swap and byte swap      // in vhdl use a for loop
-                    if (!trn_tdst_rdy_n) begin
-                        tlp_qword_counter <= tlp_qword_counter +1;
-                        if (tlp_qword_counter == qwords_in_tlp) begin
-                            trn_teof_n <= 1'b0;
+                        else begin
                             state <= s6;
                         end
                     end
                     else begin
-                        endpoint_not_ready_startover <= 1'b1;
+                        endpoint_not_ready <= 1'b1;
+                        rd_addr_extended <= rd_addr_extended_prev1;          //rd_addr_extended_minus_two
+                    end
+                    tlp_qword_counter <= 9'b1;
+                end
+
+                s4 : begin
+                    trigger_tlp_ack_internal <= 1'b0;
+                    if (!trn_tdst_rdy_n) begin
+                        trn_tsrc_rdy_n <= 1'b0;
+                        trn_td <= {rd_data[7:0], rd_data[15:8], rd_data[23:16], rd_data[31:24], rd_data[39:32], rd_data[47:40], rd_data[55:48] ,rd_data[63:56]};    // DW swap and byte swap      // in vhdl use a for loop
+
+                        rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
+
+                        tlp_qword_counter <= tlp_qword_counter +1;
+                        if (tlp_qword_counter == qwords_in_tlp) begin
+                            trn_teof_n <= 1'b0;
+                            state <= s5;
+                        end
+                    end
+                    else begin
+                        rd_addr_extended <= rd_addr_extended_prev2;          //rd_addr_extended_minus_two
+                        state <= s6;
+                    end
+                end
+
+                s5 : begin
+                    if (!trn_tdst_rdy_n) begin
+                        trn_teof_n <= 1'b1;
+                        trn_tsrc_rdy_n <= 1'b1;
+                        trn_trem_n <= 8'hFF;
+                        trn_td <= 64'b0;
+                        host_mem_addr <= look_ahead_host_mem_addr;
+                        huge_page_qword_counter <= look_ahead_huge_page_qword_counter;
+                        tlp_number <= look_ahead_tlp_number;
+                        state <= s1;
                     end
                 end
 
                 s6 : begin
+                    trigger_tlp_ack_internal <= 1'b0;                   // If it came from s4
                     if (!trn_tdst_rdy_n) begin
-                        trn_teof_n <= 1'b1;
+                        rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
                         trn_tsrc_rdy_n <= 1'b1;
-                        if (!endpoint_not_ready_startover) begin
-                            host_mem_addr <= look_ahead_host_mem_addr;
-                            huge_page_qword_counter <= look_ahead_huge_page_qword_counter;
-                            tlp_number <= look_ahead_tlp_number;
-                            state <= s1;
-                        end
-                        else begin
-                            rd_addr_extended <= recovery_commited_rd_address;
-                            state <= s2;
-                        end
+                        state <= s7;
                     end
                 end
-                
+
                 s7 : begin
+                    trn_tsrc_rdy_n <= 1'b1;
+                    rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
+                    state <= s4;
+                end
+                
+                s8 : begin
+                    trn_trem_n <= 8'b0;
                     trn_td[63:32] <= {
                                 1'b0,   //reserved
                                 `TX_MEM_WR64_FMT_TYPE, //memory write request 64bit addressing
@@ -479,42 +493,38 @@ module wr_rx_pkt_to_hugepages (
                             };
                     trn_tsof_n <= 1'b0;
                     trn_tsrc_rdy_n <= 1'b0;
-                    state <= s8;
+                    state <= s9;
                 end
 
-                s8 : begin
+                s9 : begin
                     if (!trn_tdst_rdy_n) begin
                         trn_tsof_n <= 1'b1;
                         return_huge_page_to_host <= 1'b1;
                         trn_td <= current_huge_page_addr;
-                        state <= s9;
-                    end
-                end
-
-                s9 : begin
-                    return_huge_page_to_host <= 1'b0;
-                    if (!trn_tdst_rdy_n) begin
-                        //trn_td <= {huge_page_qword_counter, 32'b0};
-                        trn_td <= {huge_page_qword_counter[7:0], huge_page_qword_counter[15:8], huge_page_qword_counter[23:16], huge_page_qword_counter[31:24], 32'b0};
-                        trn_teof_n <= 1'b0;
                         state <= s10;
                     end
                 end
 
                 s10 : begin
+                    return_huge_page_to_host <= 1'b0;
                     if (!trn_tdst_rdy_n) begin
-                        trn_teof_n <= 1'b1;
-                        trn_tsrc_rdy_n <= 1'b1;
+                        //trn_td <= {huge_page_qword_counter, 32'b0};
+                        trn_td <= {huge_page_qword_counter[7:0], huge_page_qword_counter[15:8], huge_page_qword_counter[23:16], huge_page_qword_counter[31:24], 32'b0};
+                        trn_teof_n <= 1'b0;
                         state <= s11;
                     end
                 end
 
-                s11: begin
-                    cfg_interrupt_n <= 1'b0;
-                    state <= s12;
+                s11 : begin
+                    if (!trn_tdst_rdy_n) begin
+                        trn_teof_n <= 1'b1;
+                        trn_tsrc_rdy_n <= 1'b1;
+                        cfg_interrupt_n <= 1'b0;
+                        state <= s12;
+                    end
                 end
 
-                s12 : begin     // see [1] below
+                s12 : begin
                     if (!cfg_interrupt_rdy_n) begin                                     // write tlp pkt was sent for the interrupt
                         cfg_interrupt_n <= 1'b1;
                         state <= s0;
@@ -532,8 +542,6 @@ module wr_rx_pkt_to_hugepages (
 
 endmodule // wr_rx_pkt_to_hugepages
 
-
-
 //[1] the experiment shows that we cannot go too fast to send tlps again
 /*
                 s12 : begin
@@ -549,6 +557,65 @@ endmodule // wr_rx_pkt_to_hugepages
                         else begin
                             state <= s0;
                         end
+                    end
+                end
+*/
+
+
+//[2] speed-up by generating the interrupt manually
+/*
+                s11 : begin
+                    if (!trn_tdst_rdy_n) begin
+                        trn_teof_n <= 1'b1;                                                                 // Back-to-Back transfer
+                        //trn_tsrc_rdy_n <= 1'b0;
+                        trn_td[63:32] <= {
+                                    1'b0,   //reserved
+                                    `TX_MEM_WR64_FMT_TYPE, //memory write request 64bit addressing
+                                    1'b0,   //reserved
+                                    3'b0,   //TC (traffic class)
+                                    4'b0,   //reserved
+                                    1'b0,   //TD (TLP digest present)
+                                    1'b0,   //EP (poisoned data)
+                                    2'b00,  //Relaxed ordering, No spoon in processor cache
+                                    2'b0,   //reserved
+                                    10'h01  //lenght equal 1 DW 
+                                };
+                        trn_td[31:0] <= {
+                                    cfg_completer_id,   //Requester ID
+                                    {4'b0, 4'b0 },   //Tag
+                                    4'h0,   //last DW byte enable
+                                    4'h3    //1st DW byte enable 2 bytes enabled
+                                };
+                        trn_tsof_n <= 1'b0;
+
+                        state <= s12;
+                    end
+                end
+
+                s12: begin
+                    if (!trn_tdst_rdy_n) begin
+                        trn_tsof_n <= 1'b1;
+                        trn_td <= msi_message_addr_reg;
+                        state <= s13;
+                    end
+                end
+
+                s13 : begin
+                    if (!trn_tdst_rdy_n) begin
+                        trn_td <= {msi_message_data_reg[7:0], msi_message_data_reg[15:8], 16'b0, 32'b0};
+                        trn_trem_n <= 8'h0F;
+                        trn_teof_n <= 1'b0;
+                        state <= s14;
+                    end
+                end
+
+                s14 : begin
+                    if (!trn_tdst_rdy_n) begin
+                        trn_td <= 64'b0;
+                        trn_trem_n <= 8'hFF;
+                        trn_teof_n <= 1'b1;
+                        trn_tsrc_rdy_n <= 1'b1;
+                        state <= s0;
                     end
                 end
 */
