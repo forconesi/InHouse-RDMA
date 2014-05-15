@@ -29,14 +29,14 @@ module  pci_exp_64b_app (
     output                                        change_huge_page_ack,
     input                                         change_huge_page,
     input                                         send_last_tlp_change_huge_page,
-    output     [9:0]                              commited_rd_address,
+    output     [10:0]                             commited_rd_address,
     input      [4:0]                              qwords_to_send,
 
     //-------------------------------------------------------
     // To mac_rx_interface
     //-------------------------------------------------------
     output                                        rd_addr_change,
-    output     [9:0]                              rd_addr_extended,
+    output     [10:0]                             rd_addr_extended,
 
     //-------------------------------------------------------
     // To mac_host_configuration_interface
@@ -54,7 +54,7 @@ module  pci_exp_64b_app (
     //-------------------------------------------------------
     // To internal_true_dual_port_ram
     //-------------------------------------------------------
-    output     [8:0]                              rd_addr,
+    output     [9:0]                              rd_addr,
     input      [63:0]                             rd_data,
 
     // Rx Local-Link
@@ -132,6 +132,13 @@ module  pci_exp_64b_app (
     wire   [2:0]                                      cfg_max_rd_req_size;
     wire   [2:0]                                      cfg_max_payload_size;
 
+
+    //-------------------------------------------------------
+    // Local MSI vector
+    //-------------------------------------------------------
+    wire   [63:0]     msi_message_addr_reg;
+    wire   [15:0]     msi_message_data_reg;
+    
     //-------------------------------------------------------
     // Local rx_huge_pages_addr_mod
     //-------------------------------------------------------
@@ -171,8 +178,8 @@ module  pci_exp_64b_app (
     //assign cfg_interrupt_n = 1'b1;
     assign cfg_interrupt_assert_n = 1'b1;
     assign cfg_interrupt_di = 8'b0;
-    assign cfg_dwaddr = 0;
-    assign cfg_rd_en_n = 1;
+    //assign cfg_dwaddr = 0;
+    //assign cfg_rd_en_n = 1;
 
     assign cfg_err_tlp_cpl_header = 0;
     assign cfg_di = 0;
@@ -193,6 +200,21 @@ module  pci_exp_64b_app (
     assign cfg_ext_tag_en = cfg_dcommand[8];
     assign cfg_max_rd_req_size = cfg_dcommand[14:12];
     assign cfg_max_payload_size = cfg_dcommand[7:5];
+
+
+    msi_rd_vector msi_rd_vector_mod (
+        .trn_clk ( trn_clk ),                       // I
+        .trn_lnk_up_n ( trn_lnk_up_n ),             // I
+
+        .cfg_dwaddr ( cfg_dwaddr ),                 // O [9:0]
+        .cfg_rd_en_n ( cfg_rd_en_n ),               // O 
+        .cfg_do ( cfg_do ),                         // I [31:0]
+        .cfg_rd_wr_done_n ( cfg_rd_wr_done_n ),     // I 
+        .cfg_interrupt_msienable ( cfg_interrupt_msienable ),           // I 
+
+        .msi_message_addr_reg ( msi_message_addr_reg ),                 // O [63:0]
+        .msi_message_data_reg ( msi_message_data_reg )                  // O [15:0]
+        );
 
 
     mdio_host_interface mdio_host_interface_mod (
@@ -263,6 +285,9 @@ module  pci_exp_64b_app (
         .cfg_interrupt_n ( wr_pkt_cfg_interrupt_n ),        // O
         .cfg_interrupt_rdy_n ( cfg_interrupt_rdy_n ),       // I
 
+        .msi_message_addr_reg ( msi_message_addr_reg ),                 // I [63:0]
+        .msi_message_data_reg ( msi_message_data_reg ),                 // I [15:0]
+
         .huge_page_addr_1 ( huge_page_addr_1 ),     // I [63:0]
         .huge_page_addr_2 ( huge_page_addr_2 ),     // I [63:0]
         .huge_page_status_1 ( huge_page_status_1 ), // I
@@ -275,12 +300,12 @@ module  pci_exp_64b_app (
         .change_huge_page_ack(change_huge_page_ack),          // O
         .change_huge_page(change_huge_page),                  // I
         .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),    // I
-        .rd_addr(rd_addr),                          // O [8:0]
+        .rd_addr(rd_addr),                          // O [9:0]
         .rd_data(rd_data),                          // I [63:0]
-        .commited_rd_address(commited_rd_address),  // O [9:0]
+        .commited_rd_address(commited_rd_address),  // O [10:0]
         .qwords_to_send(qwords_to_send),            // I [4:0]
         .rd_addr_change(rd_addr_change),            // O 
-        .commited_rd_address_to_mac(rd_addr_extended)     // O [9:0]
+        .commited_rd_address_to_mac(rd_addr_extended)     // O [10:0]
 
         );
 

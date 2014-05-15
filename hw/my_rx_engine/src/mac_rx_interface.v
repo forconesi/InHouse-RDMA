@@ -13,14 +13,14 @@ module mac_rx_interface (
     input                rx_bad_frame,
 
     // Internal memory driver
-    output        [8:0]      wr_addr,
+    output        [9:0]      wr_addr,
     output reg    [63:0]     wr_data,
     output reg               wr_en,
     
     // Internal logic
-    output        [9:0]      commited_wr_address,
+    output        [10:0]     commited_wr_address,
     input                    rd_addr_change,               //250 MHz domain driven
-    input         [9:0]      rd_addr_extended              //250 MHz domain driven
+    input         [10:0]     rd_addr_extended              //250 MHz domain driven
 
     );
 
@@ -35,10 +35,10 @@ module mac_rx_interface (
     //-------------------------------------------------------
     reg     [7:0]    state;
     reg     [31:0]   byte_counter;
-    reg     [9:0]    aux_wr_addr;
-    reg     [9:0]    start_wr_addr_next_pkt;
-    reg     [9:0]    wr_addr_extended;
-    reg     [9:0]    diff;
+    reg     [10:0]   aux_wr_addr;
+    reg     [10:0]   start_wr_addr_next_pkt;
+    reg     [10:0]   wr_addr_extended;
+    reg     [10:0]   diff;
     (* KEEP = "TRUE" *)reg     [31:0]   dropped_frames_counter;
     
     reg     [7:0]    rx_data_valid_reg;
@@ -57,8 +57,8 @@ module mac_rx_interface (
     //-------------------------------------------------------
     reg              rd_addr_change_reg0;
     reg              rd_addr_change_reg1;
-    reg     [9:0]    rd_addr_extended_reg0;
-    reg     [9:0]    rd_addr_extended_reg1;
+    reg     [10:0]   rd_addr_extended_reg0;
+    reg     [10:0]   rd_addr_extended_reg1;
 
     ////////////////////////////////////////////////
     // ts_sec-and-ts_nsec-generation
@@ -91,8 +91,8 @@ module mac_rx_interface (
         if (!reset_n ) begin  // reset
             rd_addr_change_reg0 <= 1'b0;
             rd_addr_change_reg1 <= 1'b0;
-            rd_addr_extended_reg0 <= 10'b0;
-            rd_addr_extended_reg1 <= 10'b0;
+            rd_addr_extended_reg0 <= 11'b0;
+            rd_addr_extended_reg1 <= 11'b0;
         end
         
         else begin  // not reset
@@ -108,7 +108,7 @@ module mac_rx_interface (
         end     // not reset
     end  //always
 
-    assign wr_addr = wr_addr_extended[8:0];
+    assign wr_addr = wr_addr_extended[9:0];
     assign commited_wr_address = start_wr_addr_next_pkt;    // address with valid data
 
     ////////////////////////////////////////////////
@@ -117,8 +117,8 @@ module mac_rx_interface (
     always @( posedge clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
-            start_wr_addr_next_pkt <= 10'b0;
-            diff <= 10'b0;
+            start_wr_addr_next_pkt <= 11'b0;
+            diff <= 11'b0;
             dropped_frames_counter <= 32'b0;
             wr_en <= 1'b0;
             state <= s0;
@@ -181,7 +181,7 @@ module mac_rx_interface (
                         end
                     endcase
 
-                    if (diff[8:0] > 9'h1E0) begin         // buffer is more than 90%
+                    if (diff[9:0] > 10'h3E8) begin         // buffer is more than 90%
                         state <= s3;
                     end
                     else if (rx_good_frame) begin        // eof (good frame)

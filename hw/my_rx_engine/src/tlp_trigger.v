@@ -7,8 +7,8 @@ module tlp_trigger (
     input    reset_n,
 
     // Internal logic
-    input      [9:0]        commited_wr_address,     // 156.25 MHz domain driven
-    input      [9:0]        commited_rd_address,     // 250 MHz domain driven
+    input      [10:0]       commited_wr_address,     // 156.25 MHz domain driven
+    input      [10:0]       commited_rd_address,     // 250 MHz domain driven
     
     input                   trigger_tlp_ack,         // 250 MHz domain driven
     output reg              trigger_tlp,
@@ -24,7 +24,7 @@ module tlp_trigger (
     //-------------------------------------------------------
     // Local 250 MHz signal synch
     //-------------------------------------------------------
-    reg     [9:0]    commited_rd_address_reg;
+    reg     [10:0]   commited_rd_address_reg;
     reg              trigger_tlp_ack_reg;
     reg              change_huge_page_ack_reg;
 
@@ -47,8 +47,8 @@ module tlp_trigger (
     localparam s6 = 8'b00100000;
 
     reg     [7:0]    main_fsm;
-    reg     [9:0]    diff;
-    reg     [9:0]    last_diff;
+    reg     [10:0]   diff;
+    reg     [10:0]   last_diff;
     reg     [3:0]    qwords_remaining;
     reg     [18:0]   huge_buffer_qword_counter;
     reg     [18:0]   look_ahead_huge_buffer_qword_counter;
@@ -62,7 +62,7 @@ module tlp_trigger (
     ////////////////////////////////////////////////
     always @( posedge clk156 or negedge reset_n ) begin
         if (!reset_n ) begin  // reset
-            commited_rd_address_reg <= 10'b0;
+            commited_rd_address_reg <= 11'b0;
             trigger_tlp_ack_reg <= 1'b0;
             change_huge_page_ack_reg <= 1'b0;
         end
@@ -112,8 +112,8 @@ module tlp_trigger (
             change_huge_page <= 1'b0;
             send_last_tlp_change_huge_page <= 1'b0;
 
-            diff <= 10'b0;
-            last_diff <= 10'b0;
+            diff <= 11'b0;
+            last_diff <= 11'b0;
             qwords_remaining <= 4'b0;
             huge_page_dirty <= 1'b0;
 
@@ -135,17 +135,17 @@ module tlp_trigger (
                 s0 : begin                                                      // waiting new eth frame(s) on internal buffer
 
                     last_diff <= diff;
-                    look_ahead_huge_buffer_qword_counter <= huge_buffer_qword_counter + diff[8:0];
-                    number_of_tlp_to_send <= diff[8:4];                                          // divide by 16 (QW/TLP)
+                    look_ahead_huge_buffer_qword_counter <= huge_buffer_qword_counter + diff[9:0];
+                    number_of_tlp_to_send <= diff[9:4];                                          // divide by 16 (QW/TLP)
                     qwords_to_send <= 5'h10;                                                // 32 DW
 
-                    if (diff[8:0] >= 9'h10) begin                                               // greater than or equal to 16 QWORDs == 32 DWORDS == MAX_PAYLOAD_TLP
+                    if (diff[9:0] >= 10'h10) begin                                              // greater than or equal to 16 QWORDs == 32 DWORDS == MAX_PAYLOAD_TLP
                         main_fsm <= s1;
                     end
                     else if ( (huge_page_dirty) && (timeout) ) begin
                         main_fsm <= s6;
                     end
-                    else if ( (diff[8:0] > 9'b0) && (timeout) ) begin
+                    else if ( (diff[9:0] > 10'b0) && (timeout) ) begin
                         qwords_to_send <= {1'b0, diff[3:0]};
                         main_fsm <= s4;
                     end

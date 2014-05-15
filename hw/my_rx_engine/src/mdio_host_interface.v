@@ -307,4 +307,4 @@ module mdio_host_interface (
     end  //always
    
 
-endmodule // rx_huge_pages_addr
+endmodule // mdio_host_interface
