@@ -4,6 +4,7 @@ nf10-objs += nf10_main.o
 nf10-objs += nf10_lbuf.o
 nf10-objs += nf10_ethtool.o
 nf10-objs += nf10_fops.o
+nf10-objs += skbpool.o
 
 ccflags-y += -g -DDEBUG
 
