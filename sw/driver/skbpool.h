@@ -27,6 +27,15 @@ static inline bool skbpool_add(struct skbpool_entry *entry,
 	return llist_add(&entry->node, &head->head);
 }
 
+static inline bool skbpool_add_batch(struct skbpool_entry *entry_first,
+				     struct skbpool_entry *entry_last,
+				     struct skbpool_head  *head)
+{
+	return llist_add_batch(&entry_first->node,
+			       &entry_last->node,
+			       &head->head);
+}
+
 static inline struct skbpool_entry *skbpool_del(struct skbpool_head *head)
 {
 	struct llist_node *node = llist_del_first(&head->head);
@@ -46,8 +55,9 @@ static inline struct skbpool_entry *skbpool_del_all(struct skbpool_head *head)
 
 	return llist_entry(node, struct skbpool_entry, node);
 }
-extern struct skbpool_entry *skbpool_alloc(struct net_device *netdev,
-					   unsigned int length);
+
+extern struct skbpool_entry *skbpool_alloc(void);
 extern void skbpool_free(struct skbpool_entry *entry);
-extern int skbpool_init(void);
-extern void skbpool_destroy(void);
+extern int skbpool_init(struct net_device *netdev, unsigned int length,
+			unsigned long min_list, unsigned int nr_alloc);
+extern void skbpool_destroy(struct skbpool_head *head);

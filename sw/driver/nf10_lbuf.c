@@ -147,15 +147,12 @@ static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx
 static void nf10_lbuf_rx_worker(struct work_struct *work)
 {
 	struct nf10_adapter *adapter = lbuf_hw.adapter;
-#if 0
-	struct sk_buff *skb;
-
-	while((skb = skb_dequeue(get_rxq())))
-		napi_gro_receive(&adapter->napi, skb);
-#endif
 	struct skbpool_entry *skb_entry, *p, *n;
 	
 	skb_entry = skbpool_del_all(get_rxq());
+
+	if (skb_entry == NULL)
+		return;
 
 	skbpool_for_each_entry(p, skb_entry)
 		napi_gro_receive(&adapter->napi, p->skb);
@@ -178,6 +175,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	unsigned int rx_packets = 0;
 	struct skbpool_entry *skb_entry;
 	unsigned int data_len;
+	u64 t1, t2, t3, t4;
 
 	if (nr_qwords == 0 ||
 	    max_dword_idx > 524288) {	/* FIXME: replace constant */
@@ -202,18 +200,13 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		}
 		data_len = pkt_len - 4;
 
-#if 0
-		if ((skb = netdev_alloc_skb(netdev, data_len)) == NULL) {
+		rdtscll(t1);
+		if ((skb_entry = skbpool_alloc()) == NULL) {
 			netif_err(adapter, rx_err, netdev,
 				  "rx_cons=%d failed to alloc skb", rx_cons);
 			goto next_pkt;
 		}
-#endif
-		if ((skb_entry = skbpool_alloc(netdev, data_len)) == NULL) {
-			netif_err(adapter, rx_err, netdev,
-				  "rx_cons=%d failed to alloc skb", rx_cons);
-			goto next_pkt;
-		}
+		rdtscll(t2);
 
 		skb = skb_entry->skb;
 		skb_copy_to_linear_data(skb, (void *)(lbuf_addr + dword_idx),
@@ -223,10 +216,9 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		skb->protocol = eth_type_trans(skb, adapter->netdev);
 		skb->ip_summed = CHECKSUM_NONE;
 
-#if 0
-		skb_queue_tail(get_rxq(), skb);
-#endif
+		rdtscll(t3);
 		skbpool_add(skb_entry, get_rxq());
+		rdtscll(t4);
 		queue_work(lbuf_hw.rx_wq, get_rx_work());
 
 		rx_packets++;
@@ -242,8 +234,8 @@ next_pkt:
 	adapter->netdev->stats.rx_packets += rx_packets;
 
 	netif_dbg(adapter, rx_status, adapter->netdev,
-		  "RX lbuf delivered nr_qwords=%u # of packets=%u/%lu\n",
-		  nr_qwords, rx_packets, adapter->netdev->stats.rx_packets);
+		  "RX lbuf delivered nr_qwords=%u # of packets=%u/%lu %lu %lu\n",
+		  nr_qwords, rx_packets, adapter->netdev->stats.rx_packets, t2-t1, t4-t3);
 
 	return 0;
 }
@@ -292,7 +284,8 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 		return -ENOMEM;
 	}
 
-	if ((err = skbpool_init())) {
+	/* FIXME: replace constants */
+	if ((err = skbpool_init(adapter->netdev, 1518, 10000, 2500))) {
 		netif_err(adapter, rx_err, adapter->netdev,
 			  "failed to init skbpool\n");
 		return err;
@@ -305,10 +298,7 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 
 static void nf10_lbuf_free(struct nf10_adapter *adapter)
 {
-#if 0
-	skb_queue_purge(get_rxq());
-#endif
-	skbpool_destroy();
+	skbpool_destroy(get_rxq());
 	destroy_workqueue(lbuf_hw.rx_wq);
 }
 
