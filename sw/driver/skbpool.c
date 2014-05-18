@@ -24,6 +24,8 @@ static struct skbpool_entry *skbpool_entry_alloc(void)
 			skbpool_free(entry);
 			entry = NULL;
 		}
+		else
+			entry->node.next = NULL;
 	}
 
 	return entry;
@@ -79,7 +81,7 @@ static void skbpool_worker(struct work_struct *work)
 	}
 }
 
-struct skbpool_entry *skbpool_alloc(void)
+struct skbpool_entry *skbpool_alloc_single(void)
 {
 	struct skbpool_entry *entry;
 
@@ -101,6 +103,28 @@ struct skbpool_entry *skbpool_alloc(void)
 	}
 
 	return entry;
+}
+
+struct skbpool_entry *skbpool_alloc(struct skbpool_entry *entry)
+{
+	struct skbpool_entry *skb_entry;
+
+	if (unlikely(entry == NULL || entry->node.next == NULL)) {
+		skb_entry = skbpool_del_all(&skbpool_list);
+		if (unlikely(skb_entry == NULL))
+			skb_entry = skbpool_entry_alloc();
+		else
+			atomic_set(&nr_skbpool_list, 0);
+
+		/* if entry->node.next == NULL, link it */
+		if (entry)
+			entry->node.next = skb_entry;
+		queue_work_on(num_online_cpus() - 1, skbpool_wq, &skbpool_work);
+	}
+	else
+		skb_entry = entry->node.next;
+
+	return skb_entry;
 }
 
 void skbpool_free(struct skbpool_entry *entry)

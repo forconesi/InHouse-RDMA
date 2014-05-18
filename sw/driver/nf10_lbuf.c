@@ -173,8 +173,10 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	struct large_buffer *lbuf = get_lbuf();
 	unsigned int rx_cons = lbuf->rx_cons;
 	unsigned int rx_packets = 0;
-	struct skbpool_entry *skb_entry;
 	unsigned int data_len;
+	struct skbpool_entry *skb_entry = NULL;
+	struct skbpool_entry *skb_entry_first = NULL;	/* local header */
+	struct skbpool_entry *skb_entry_last = NULL;
 
 	if (nr_qwords == 0 ||
 	    max_dword_idx > 524288) {	/* FIXME: replace constant */
@@ -199,11 +201,14 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		}
 		data_len = pkt_len - 4;
 
-		if ((skb_entry = skbpool_alloc()) == NULL) {
+		if ((skb_entry = skbpool_alloc(skb_entry)) == NULL) {
 			netif_err(adapter, rx_err, netdev,
 				  "rx_cons=%d failed to alloc skb", rx_cons);
 			goto next_pkt;
 		}
+		if (unlikely(skb_entry_first == NULL))
+			skb_entry_first = skb_entry;
+		skb_entry_last = skb_entry;
 
 		skb = skb_entry->skb;
 		skb_copy_to_linear_data(skb, (void *)(lbuf_addr + dword_idx),
@@ -212,9 +217,6 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		skb_put(skb, data_len);
 		skb->protocol = eth_type_trans(skb, adapter->netdev);
 		skb->ip_summed = CHECKSUM_NONE;
-
-		skbpool_add(skb_entry, get_rxq());
-		queue_work(lbuf_hw.rx_wq, get_rx_work());
 
 		rx_packets++;
 next_pkt:
@@ -225,6 +227,12 @@ next_pkt:
 		else if (bytes_remainder > 0)
 			dword_idx += 2;
 	} while(dword_idx < max_dword_idx);
+
+	if (likely(skb_entry_last)) {
+		skbpool_add_batch(skb_entry_first, skb_entry_last, get_rxq());
+		queue_work(lbuf_hw.rx_wq, get_rx_work());
+		/* TODO: handling unused list */
+	}
 
 	adapter->netdev->stats.rx_packets += rx_packets;
 

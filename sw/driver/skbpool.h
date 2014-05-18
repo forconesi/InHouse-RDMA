@@ -56,7 +56,8 @@ static inline struct skbpool_entry *skbpool_del_all(struct skbpool_head *head)
 	return llist_entry(node, struct skbpool_entry, node);
 }
 
-extern struct skbpool_entry *skbpool_alloc(void);
+extern struct skbpool_entry *skbpool_alloc_single(void);
+extern struct skbpool_entry *skbpool_alloc(struct skbpool_entry *entry);
 extern void skbpool_free(struct skbpool_entry *entry);
 extern int skbpool_init(struct net_device *netdev, unsigned int length,
 			unsigned long min_list, unsigned int nr_alloc);
