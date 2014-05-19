@@ -47,7 +47,8 @@ if [ ! -e $PGDEV ]; then
 	echo "Error: pktgen might not be loaded or $netif is not up now!"
 	exit
 fi
-count=1000000
+#count=1000000
+count=30000
 pgset "count $count"
 pgset "clone_skb 100000"
 pgset "pkt_size $pkt_size"	# nic adds 4B CRC

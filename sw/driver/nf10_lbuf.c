@@ -183,6 +183,8 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	struct skbpool_entry *skb_entry = &skb_free_list;
 	struct skbpool_entry *skb_entry_first = NULL;	/* local header */
 	struct skbpool_entry *skb_entry_last = NULL;
+	struct skbpool_entry *skb_entry_next;
+	//u64 t1, t2, t3, t4;
 
 	if (nr_qwords == 0 ||
 	    max_dword_idx > 524288) {	/* FIXME: replace constant */
@@ -195,6 +197,9 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	/* dword 1 to 31 are reserved */
 	dword_idx = 32;
 	do {
+		if (skb_entry->node.next && (skb_entry_next = skbpool_next_entry(skb_entry)))
+			prefetch(skb_entry_next->skb->data);
+
 		dword_idx++;			/* reserved for timestamp */
 		pkt_len = lbuf_addr[dword_idx++];
 
@@ -207,24 +212,30 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		}
 		data_len = pkt_len - 4;
 
+		//rdtscll(t1);
 		if ((skb_entry = skbpool_alloc(skb_entry)) == NULL) {
 			netif_err(adapter, rx_err, netdev,
 				  "rx_cons=%d failed to alloc skb", rx_cons);
 			goto next_pkt;
 		}
+		//rdtscll(t2);
 		if (unlikely(skb_entry_first == NULL))
 			skb_entry_first = skb_entry;
 		skb_entry_last = skb_entry;
 
 		skb = skb_entry->skb;
+		//rdtscll(t3);
 		skb_copy_to_linear_data(skb, (void *)(lbuf_addr + dword_idx),
 					data_len);	/* memcpy */
+		//rdtscll(t4);
 
 		skb_put(skb, data_len);
 		skb->protocol = eth_type_trans(skb, adapter->netdev);
 		skb->ip_summed = CHECKSUM_NONE;
 
 		rx_packets++;
+		//if ((rx_packets & 0x7ff) == 0)
+		//	pr_debug("%llu %llu\n", t2 - t1, t4 - t3);
 next_pkt:
 		dword_idx += pkt_len >> 2;	/* byte -> dword */
 		bytes_remainder = pkt_len & 0x7;

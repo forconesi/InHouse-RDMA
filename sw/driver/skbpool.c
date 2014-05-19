@@ -37,7 +37,9 @@ static void skbpool_worker(struct work_struct *work)
 	struct skbpool_entry *entry;
 	int nr_alloc;
 
+#if 0
 	pr_debug("skbpool: cpu%d start allocating\n", smp_processor_id());
+#endif
 	while(atomic_read(&nr_skbpool_list) < min_skbpool_list) {
 		head = tail = NULL;
 		for (nr_alloc = 0; nr_alloc < nr_batch_alloc; nr_alloc++) {
@@ -59,8 +61,10 @@ static void skbpool_worker(struct work_struct *work)
 
 		skbpool_add_batch(head, tail, &skbpool_list);
 		atomic_add(nr_alloc, &nr_skbpool_list);
+#if 0
 		pr_debug("skbpool: skb filled %d/%d\n",
 			 nr_alloc, atomic_read(&nr_skbpool_list));
+#endif
 	}
 }
 
@@ -92,13 +96,12 @@ struct skbpool_entry *skbpool_alloc_single(void)
 struct skbpool_entry *skbpool_alloc(struct skbpool_entry *entry)
 {
 	struct skbpool_entry *skb_entry;
-	static u64 nr_calls;
-
-	nr_calls++;
-
+	
 	if (unlikely(entry == NULL || entry->node.next == NULL)) {
-		pr_debug("skbpool: %llu chunk alloc (%d) entry=%p entry->node.next=%p\n",
-			 nr_calls, atomic_read(&nr_skbpool_list), entry, entry ? entry->node.next : NULL);
+#if 0
+		pr_debug("skbpool: chunk alloc (%d) entry=%p entry->node.next=%p\n",
+			 atomic_read(&nr_skbpool_list), entry, entry ? entry->node.next : NULL);
+#endif
 		skb_entry = skbpool_del_all(&skbpool_list);
 		if (likely(skb_entry))
 			atomic_set(&nr_skbpool_list, 0);
