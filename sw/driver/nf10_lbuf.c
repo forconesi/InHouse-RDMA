@@ -30,6 +30,20 @@ static struct lbuf_hw {
 #define get_rxq()	(&lbuf_hw.rxq)
 #define get_rx_work()	(&lbuf_hw.rx_work)
 
+/* profiling memcpy performance */
+//#define MEMCPY_PERF
+#ifdef MEMCPY_PERF
+#define DEFINE_TIMESTAMP()	u64	t = 0, t1, t2
+#define START_TIMESTAMP()	rdtscll(t1)
+#define STOP_TIMESTAMP()	do { rdtscll(t2); t += (t2 - t1); } while(0)
+#define GET_ELAPSED_CYCLES()	(t)
+#else
+#define DEFINE_TIMESTAMP()
+#define START_TIMESTAMP()
+#define STOP_TIMESTAMP()
+#define GET_ELAPSED_CYCLES()	(0ULL)
+#endif
+
 #define LBUF_SIZE	HPAGE_PMD_SIZE
 
 static inline struct page *alloc_lbuf(void)
@@ -183,8 +197,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	struct skbpool_entry *skb_entry = &skb_free_list;
 	struct skbpool_entry *skb_entry_first = NULL;	/* local header */
 	struct skbpool_entry *skb_entry_last = NULL;
-	struct skbpool_entry *skb_entry_next;
-	//u64 t1, t2, t3, t4;
+	DEFINE_TIMESTAMP();
 
 	if (nr_qwords == 0 ||
 	    max_dword_idx > 524288) {	/* FIXME: replace constant */
@@ -197,14 +210,13 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	/* dword 1 to 31 are reserved */
 	dword_idx = 32;
 	do {
-		if (skb_entry->node.next && (skb_entry_next = skbpool_next_entry(skb_entry)))
-			prefetch(skb_entry_next->skb->data);
+		skbpool_prefetch_next(skb_entry);
 
 		dword_idx++;			/* reserved for timestamp */
 		pkt_len = lbuf_addr[dword_idx++];
 
 		/* FIXME: replace constant */
-		if (pkt_len < 60 || pkt_len > 1518) {	
+		if (unlikely(pkt_len < 60 || pkt_len > 1518)) {	
 			netif_err(adapter, rx_err, netdev,
 				  "rx_cons=%d lbuf contains invalid pkt len=%u",
 				  rx_cons, pkt_len);
@@ -212,30 +224,26 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		}
 		data_len = pkt_len - 4;
 
-		//rdtscll(t1);
-		if ((skb_entry = skbpool_alloc(skb_entry)) == NULL) {
+		if (unlikely((skb_entry = skbpool_alloc(skb_entry)) == NULL)) {
 			netif_err(adapter, rx_err, netdev,
 				  "rx_cons=%d failed to alloc skb", rx_cons);
 			goto next_pkt;
 		}
-		//rdtscll(t2);
 		if (unlikely(skb_entry_first == NULL))
 			skb_entry_first = skb_entry;
 		skb_entry_last = skb_entry;
 
 		skb = skb_entry->skb;
-		//rdtscll(t3);
+
+		START_TIMESTAMP();
 		skb_copy_to_linear_data(skb, (void *)(lbuf_addr + dword_idx),
 					data_len);	/* memcpy */
-		//rdtscll(t4);
+		STOP_TIMESTAMP();
 
 		skb_put(skb, data_len);
-		skb->protocol = eth_type_trans(skb, adapter->netdev);
 		skb->ip_summed = CHECKSUM_NONE;
 
 		rx_packets++;
-		//if ((rx_packets & 0x7ff) == 0)
-		//	pr_debug("%llu %llu\n", t2 - t1, t4 - t3);
 next_pkt:
 		dword_idx += pkt_len >> 2;	/* byte -> dword */
 		bytes_remainder = pkt_len & 0x7;
@@ -254,8 +262,8 @@ next_pkt:
 	adapter->netdev->stats.rx_packets += rx_packets;
 
 	netif_dbg(adapter, rx_status, adapter->netdev,
-		  "RX lbuf delivered nr_qwords=%u # of packets=%u/%lu\n",
-		  nr_qwords, rx_packets, adapter->netdev->stats.rx_packets);
+		  "RX lbuf delivered nr_qwords=%u # of packets=%u/%lu mc=%llu\n",
+		  nr_qwords, rx_packets, adapter->netdev->stats.rx_packets, GET_ELAPSED_CYCLES());
 
 	return 0;
 }

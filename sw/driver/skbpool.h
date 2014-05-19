@@ -59,6 +59,16 @@ static inline struct skbpool_entry *skbpool_del_all(struct skbpool_head *head)
 	return llist_entry(node, struct skbpool_entry, node);
 }
 
+static inline void skbpool_prefetch_next(struct skbpool_entry *entry)
+{
+	struct skbpool_entry *skb_entry_next;
+
+	if (likely(entry && entry->node.next)) {
+		skb_entry_next = skbpool_next_entry(entry);
+		prefetchw(skb_entry_next->skb->data);
+	}
+}
+
 extern struct skbpool_entry *skbpool_alloc_single(void);
 extern struct skbpool_entry *skbpool_alloc(struct skbpool_entry *entry);
 extern void skbpool_free(struct skbpool_entry *entry);
