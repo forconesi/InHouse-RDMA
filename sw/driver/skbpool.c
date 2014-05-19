@@ -15,9 +15,9 @@ static unsigned int nr_batch_alloc;
 
 static struct skbpool_entry *skbpool_entry_alloc(void)
 {
-	struct skbpool_entry *entry =
-		kmem_cache_alloc(skbpool_cache, GFP_ATOMIC);
-
+	struct skbpool_entry *entry;
+	
+	entry = kmem_cache_alloc(skbpool_cache, GFP_ATOMIC);
 	if (entry) {
 		entry->skb = netdev_alloc_skb(skb_netdev, skb_data_len);
 		if (entry->skb == NULL) {
@@ -31,27 +31,13 @@ static struct skbpool_entry *skbpool_entry_alloc(void)
 	return entry;
 }
 
-static void skbpool_purge(struct skbpool_head *head)
-{
-	struct skbpool_entry *skb_entry, *p, *n;
-
-	skb_entry = skbpool_del_all(head);
-	if (skb_entry == NULL)
-		return;
-
-	skbpool_for_each_entry_safe(p, n, skb_entry) {
-		if (likely(p->skb))
-			kfree_skb(p->skb);
-		skbpool_free(p);
-	}
-}
-
 static void skbpool_worker(struct work_struct *work)
 {
 	struct skbpool_entry *head, *tail;	/* local batch */
 	struct skbpool_entry *entry;
 	int nr_alloc;
 
+	pr_debug("skbpool: cpu%d start allocating\n", smp_processor_id());
 	while(atomic_read(&nr_skbpool_list) < min_skbpool_list) {
 		head = tail = NULL;
 		for (nr_alloc = 0; nr_alloc < nr_batch_alloc; nr_alloc++) {
@@ -73,14 +59,12 @@ static void skbpool_worker(struct work_struct *work)
 
 		skbpool_add_batch(head, tail, &skbpool_list);
 		atomic_add(nr_alloc, &nr_skbpool_list);
-
-#if 0
 		pr_debug("skbpool: skb filled %d/%d\n",
 			 nr_alloc, atomic_read(&nr_skbpool_list));
-#endif
 	}
 }
 
+/* FIXME: will be deprecated */
 struct skbpool_entry *skbpool_alloc_single(void)
 {
 	struct skbpool_entry *entry;
@@ -108,21 +92,28 @@ struct skbpool_entry *skbpool_alloc_single(void)
 struct skbpool_entry *skbpool_alloc(struct skbpool_entry *entry)
 {
 	struct skbpool_entry *skb_entry;
+	static u64 nr_calls;
+
+	nr_calls++;
 
 	if (unlikely(entry == NULL || entry->node.next == NULL)) {
+		pr_debug("skbpool: %llu chunk alloc (%d) entry=%p entry->node.next=%p\n",
+			 nr_calls, atomic_read(&nr_skbpool_list), entry, entry ? entry->node.next : NULL);
 		skb_entry = skbpool_del_all(&skbpool_list);
-		if (unlikely(skb_entry == NULL))
-			skb_entry = skbpool_entry_alloc();
-		else
+		if (likely(skb_entry))
 			atomic_set(&nr_skbpool_list, 0);
+		else {	/* fallback */
+			skb_entry = skbpool_entry_alloc();
+			pr_warn("skbpool: WARN! fallback sync alloc\n");
+		}
 
 		/* if entry->node.next == NULL, link it */
 		if (entry)
-			entry->node.next = skb_entry;
+			entry->node.next = &skb_entry->node;
 		queue_work_on(num_online_cpus() - 1, skbpool_wq, &skbpool_work);
 	}
 	else
-		skb_entry = entry->node.next;
+		skb_entry = skbpool_next_entry(entry);
 
 	return skb_entry;
 }
@@ -130,6 +121,33 @@ struct skbpool_entry *skbpool_alloc(struct skbpool_entry *entry)
 void skbpool_free(struct skbpool_entry *entry)
 {
 	kmem_cache_free(skbpool_cache, entry);
+}
+
+void skbpool_purge(struct skbpool_entry *entry)
+{
+	struct skbpool_entry *p, *n;
+
+	if (entry == NULL)
+		return;
+
+	skbpool_for_each_entry_safe(p, n, entry) {
+		if (likely(p->skb))
+			kfree_skb(p->skb);
+		skbpool_free(p);
+	}
+}
+
+void skbpool_purge_head(struct skbpool_head *head)
+{
+	struct skbpool_entry *entry;
+
+	if (head == NULL)
+		return;
+
+	if ((entry = skbpool_del_all(head)) == NULL)
+		return;
+
+	skbpool_purge(entry);
 }
 
 int skbpool_init(struct net_device *netdev, unsigned int length,
@@ -145,7 +163,10 @@ int skbpool_init(struct net_device *netdev, unsigned int length,
 	skbpool_head_init(&skbpool_list);
 
 	INIT_WORK(&skbpool_work, skbpool_worker);
+#if 0
 	skbpool_wq = alloc_ordered_workqueue("skbpool", 0);
+#endif
+	skbpool_wq = alloc_workqueue("skbpool", 0, 0);
 	if (skbpool_wq == NULL) {
 		pr_err("failed to alloc skbpool workqueue\n");
 		return -ENOMEM;
@@ -160,16 +181,15 @@ int skbpool_init(struct net_device *netdev, unsigned int length,
 		skb_data_len, min_skbpool_list, nr_batch_alloc);
 
 	if (atomic_read(&nr_skbpool_list) < min_list)
-		queue_work(skbpool_wq, &skbpool_work);
+		queue_work_on(num_online_cpus() - 1, skbpool_wq, &skbpool_work);
 
 	return 0;
 }
 
-void skbpool_destroy(struct skbpool_head *head)
+void skbpool_destroy(void)
 {
 	destroy_workqueue(skbpool_wq);
-	skbpool_purge(head);
-	skbpool_purge(&skbpool_list);
+	skbpool_purge_head(&skbpool_list);
 	atomic_set(&nr_skbpool_list, 0);
 	kmem_cache_destroy(skbpool_cache);
 }

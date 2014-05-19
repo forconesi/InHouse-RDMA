@@ -16,6 +16,9 @@ struct skbpool_head {
 #define skbpool_for_each_entry_safe(pos, n, entry)	\
 	llist_for_each_entry_safe(pos, n, &entry->node, node)
 
+#define skbpool_next_entry(entry)	\
+	llist_entry(entry->node.next, struct skbpool_entry, node)
+
 static inline void skbpool_head_init(struct skbpool_head *head)
 {
 	init_llist_head(&head->head);
@@ -59,6 +62,8 @@ static inline struct skbpool_entry *skbpool_del_all(struct skbpool_head *head)
 extern struct skbpool_entry *skbpool_alloc_single(void);
 extern struct skbpool_entry *skbpool_alloc(struct skbpool_entry *entry);
 extern void skbpool_free(struct skbpool_entry *entry);
+extern void skbpool_purge(struct skbpool_entry *entry);
+extern void skbpool_purge_head(struct skbpool_head *head);
 extern int skbpool_init(struct net_device *netdev, unsigned int length,
 			unsigned long min_list, unsigned int nr_alloc);
-extern void skbpool_destroy(struct skbpool_head *head);
+extern void skbpool_destroy(void);

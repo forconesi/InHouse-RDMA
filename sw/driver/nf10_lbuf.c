@@ -3,6 +3,8 @@
 #include "nf10_lbuf.h"
 #include "skbpool.h"
 
+static struct skbpool_entry skb_free_list;
+
 struct desc {
 	/* FIXME: one of pages and kern_addrs may not be needed */
 	struct page	*page;
@@ -148,14 +150,18 @@ static void nf10_lbuf_rx_worker(struct work_struct *work)
 {
 	struct nf10_adapter *adapter = lbuf_hw.adapter;
 	struct skbpool_entry *skb_entry, *p, *n;
+	static unsigned int rx_packets;
 	
 	skb_entry = skbpool_del_all(get_rxq());
 
 	if (skb_entry == NULL)
 		return;
 
-	skbpool_for_each_entry(p, skb_entry)
+	skbpool_for_each_entry(p, skb_entry) {
 		napi_gro_receive(&adapter->napi, p->skb);
+		rx_packets++;
+	}
+	pr_debug("rx_packets=%u\n", rx_packets);
 
 	skbpool_for_each_entry_safe(p, n, skb_entry)
 		skbpool_free(p);
@@ -174,7 +180,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	unsigned int rx_cons = lbuf->rx_cons;
 	unsigned int rx_packets = 0;
 	unsigned int data_len;
-	struct skbpool_entry *skb_entry = NULL;
+	struct skbpool_entry *skb_entry = &skb_free_list;
 	struct skbpool_entry *skb_entry_first = NULL;	/* local header */
 	struct skbpool_entry *skb_entry_last = NULL;
 
@@ -229,9 +235,9 @@ next_pkt:
 	} while(dword_idx < max_dword_idx);
 
 	if (likely(skb_entry_last)) {
+		skb_free_list = *skb_entry_last;
 		skbpool_add_batch(skb_entry_first, skb_entry_last, get_rxq());
 		queue_work(lbuf_hw.rx_wq, get_rx_work());
-		/* TODO: handling unused list */
 	}
 
 	adapter->netdev->stats.rx_packets += rx_packets;
@@ -288,7 +294,7 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 	}
 
 	/* FIXME: replace constants */
-	if ((err = skbpool_init(adapter->netdev, 1518, 10000, 2500))) {
+	if ((err = skbpool_init(adapter->netdev, 1518, 30000, 3000))) {
 		netif_err(adapter, rx_err, adapter->netdev,
 			  "failed to init skbpool\n");
 		return err;
@@ -301,7 +307,9 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 
 static void nf10_lbuf_free(struct nf10_adapter *adapter)
 {
-	skbpool_destroy(get_rxq());
+	skbpool_purge(&skb_free_list);
+	skbpool_purge_head(get_rxq());
+	skbpool_destroy();
 	destroy_workqueue(lbuf_hw.rx_wq);
 }
 
