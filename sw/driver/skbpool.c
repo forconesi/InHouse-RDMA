@@ -21,11 +21,8 @@ static struct skbpool_entry *skbpool_entry_alloc(void)
 	entry = kmem_cache_alloc(skbpool_cache, GFP_ATOMIC);
 	if (entry) {
 		entry->skb = netdev_alloc_skb(skb_netdev, skb_data_len);
-		if (likely(entry->skb)) {
-			entry->skb->protocol =
-				eth_type_trans(entry->skb, skb_netdev);
+		if (likely(entry->skb))
 			entry->node.next = NULL;
-		}
 		else {
 			skbpool_free(entry);
 			entry = NULL;

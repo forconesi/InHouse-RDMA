@@ -241,6 +241,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		STOP_TIMESTAMP();
 
 		skb_put(skb, data_len);
+		skb->protocol = eth_type_trans(skb, adapter->netdev);
 		skb->ip_summed = CHECKSUM_NONE;
 
 		rx_packets++;
