@@ -1,7 +1,6 @@
 `timescale 1ns / 1ps
 //`default_nettype none
-
-`define INSTRUMENTATION 1
+`include "includes.v"
 
 module my_top ( 
     // PCI Express Fabric Interface
@@ -193,9 +192,9 @@ module my_top (
     // Local Wires internal_true_dual_port_ram
     //-------------------------------------------------------
 
-    wire   [8:0]                                      wr_addr;
+    wire   [`BF:0]                                    wr_addr;
     wire   [63:0]                                     wr_data;
-    wire   [8:0]                                      rd_addr;
+    wire   [`BF:0]                                    rd_addr;
     wire   [63:0]                                     rd_data;
     wire                                              wr_clk;
     wire                                              wr_en;
@@ -207,8 +206,8 @@ module my_top (
     // Local Wires tlp_trigger
     //-------------------------------------------------------
 
-    wire   [9:0]                                      commited_wr_address;
-    wire   [9:0]                                      commited_rd_address;
+    wire   [`BF+1:0]                                  commited_wr_address;
+    wire   [`BF+1:0]                                  commited_rd_address;
     wire                                              trigger_tlp_ack;
     wire                                              trigger_tlp;
     wire                                              change_huge_page_ack;
@@ -219,7 +218,7 @@ module my_top (
     //-------------------------------------------------------
     // Local Wires mac_rx_interface
     //-------------------------------------------------------
-    wire   [9:0]                                      rd_addr_extended;
+    wire   [`BF+1:0]                                  rd_addr_extended;
     wire                                              rd_addr_change;
 
     ////////////////////////////////////////////////
@@ -416,9 +415,9 @@ module my_top (
     //-------------------------------------------------------
 
     dist_mem_gen_v7_2 my_bram (
-        .a(wr_addr),                // I [8:0]
+        .a(wr_addr),                // I [`BF:0]
         .d(wr_data),                // I [63:0]
-        .dpra(rd_addr),             // I [8:0]
+        .dpra(rd_addr),             // I [`BF:0]
         .clk(wr_clk),               // I 
         .we(wr_en),                 // I
         .qdpo_clk(rd_clk),          // I
@@ -437,8 +436,8 @@ module my_top (
     tlp_trigger my_tlp_trigger (
         .clk156(wr_clk),                                        // I
         .reset_n(reset_n),                                      // I
-        .commited_wr_address(commited_wr_address),              // I [9:0]
-        .commited_rd_address(commited_rd_address),              // I [9:0]
+        .commited_wr_address(commited_wr_address),              // I [`BF+1:0]
+        .commited_rd_address(commited_rd_address),              // I [`BF+1:0]
         .trigger_tlp_ack(trigger_tlp_ack),                      // I
         .trigger_tlp(trigger_tlp),                              // O
         .change_huge_page_ack(change_huge_page_ack),            // I
@@ -447,7 +446,7 @@ module my_top (
         .qwords_to_send(qwords_to_send)                         // O [4:0]
         );
 
-    //assign commited_rd_address = 10'b0;  // debug
+    //assign commited_rd_address = (`BF+2)'b0;  // debug
     //assign trigger_tlp_ack = 1'b0;  // debug
 
     //-------------------------------------------------------
@@ -461,12 +460,12 @@ module my_top (
         .rx_data_valid(mac_rx_data_valid),     // I [7:0]
         .rx_good_frame(mac_rx_good_frame),     // I
         .rx_bad_frame(mac_rx_bad_frame),       // I
-        .wr_addr(wr_addr),                     // O [8:0]
+        .wr_addr(wr_addr),                     // O [`BF:0]
         .wr_data(wr_data),                     // O [63:0]
         .wr_en(wr_en),                         // O
-        .commited_wr_address(commited_wr_address),  // O [9:0]
+        .commited_wr_address(commited_wr_address),  // O [`BF+1:0]
         .rd_addr_change(rd_addr_change),        // I
-        .rd_addr_extended(rd_addr_extended)    // I [9:0]
+        .rd_addr_extended(rd_addr_extended)    // I [`BF+1:0]
         );
 
     //-------------------------------------------------------
@@ -502,14 +501,14 @@ module my_top (
         .change_huge_page_ack(change_huge_page_ack),        // O
         .change_huge_page(change_huge_page),                // I
         .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),        // I
-        .commited_rd_address(commited_rd_address),          // O [9:0]
+        .commited_rd_address(commited_rd_address),          // O [`BF+1:0]
         .qwords_to_send(qwords_to_send),                    // I [4:0]
         
         //-------------------------------------------------------
         // To mac_rx_interface
         //-------------------------------------------------------
         .rd_addr_change(rd_addr_change),                    // O
-        .rd_addr_extended(rd_addr_extended),                // O [9:0]
+        .rd_addr_extended(rd_addr_extended),                // O [`BF+1:0]
 
         //-------------------------------------------------------
         // To mac_host_configuration_interface
@@ -527,7 +526,7 @@ module my_top (
         //-------------------------------------------------------
         // To internal_true_dual_port_ram
         //-------------------------------------------------------
-        .rd_addr(rd_addr),                       // O [8:0]
+        .rd_addr(rd_addr),                       // O [`BF:0]
         .rd_data(rd_data),                       // I [63:0]
 
         // Rx Local-Link

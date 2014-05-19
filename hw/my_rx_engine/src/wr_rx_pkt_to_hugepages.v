@@ -1,6 +1,8 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
 
+`include "includes.v"
+
 `define TX_MEM_WR64_FMT_TYPE 7'b11_00000
 
 module wr_rx_pkt_to_hugepages (
@@ -37,12 +39,12 @@ module wr_rx_pkt_to_hugepages (
     output reg             change_huge_page_ack,
     input                  change_huge_page,     // 156.25 MHz domain driven
     input                  send_last_tlp_change_huge_page,          // 156.25 MHz domain driven
-    output      [8:0]      rd_addr,
+    output      [`BF:0]    rd_addr,
     input       [63:0]     rd_data,
-    output reg  [9:0]      commited_rd_address,
+    output reg  [`BF+1:0]  commited_rd_address,
     input       [4:0]      qwords_to_send,        // 156.25 MHz domain driven
     output reg             rd_addr_change,        
-    output reg  [9:0]      commited_rd_address_to_mac
+    output reg  [`BF+1:0]  commited_rd_address_to_mac
 
     );
 
@@ -102,7 +104,7 @@ module wr_rx_pkt_to_hugepages (
     reg     [14:0]  state;
 
     reg     [8:0]   tlp_qword_counter;
-    reg     [9:0]   next_rd_address;
+    reg     [`BF+1:0]   next_rd_address;
     reg     [31:0]  tlp_number;
     reg     [31:0]  look_ahead_tlp_number;
     reg     [8:0]   qwords_in_tlp;
@@ -111,11 +113,11 @@ module wr_rx_pkt_to_hugepages (
     reg     [31:0]  huge_page_qword_counter;
     reg     [31:0]  look_ahead_huge_page_qword_counter;
     reg             endpoint_not_ready;
-    reg     [9:0]   rd_addr_extended;
+    reg     [`BF+1:0]   rd_addr_extended;
     reg             remember_to_change_huge_page;
     reg             rd_addr_change_internal;
-    reg     [9:0]   rd_addr_extended_prev1;
-    reg     [9:0]   rd_addr_extended_prev2;
+    reg     [`BF+1:0]   rd_addr_extended_prev1;
+    reg     [`BF+1:0]   rd_addr_extended_prev2;
     
     assign reset_n = ~trn_lnk_up_n;
 
@@ -282,7 +284,7 @@ module wr_rx_pkt_to_hugepages (
         end     // not reset
     end  //always
 
-    assign rd_addr = rd_addr_extended[8:0];
+    assign rd_addr = rd_addr_extended[`BF:0];
 
     ////////////////////////////////////////////////
     // write request TLP generation to huge_page
@@ -302,11 +304,11 @@ module wr_rx_pkt_to_hugepages (
 
             trigger_tlp_ack_internal <= 1'b0;                // must be active for 2 or 3 clks in 250 MHz domain
 
-            commited_rd_address <= 10'b0;
-            next_rd_address <= 10'b0;
-            rd_addr_extended <= 10'b0;
+            commited_rd_address <= 'b0;
+            next_rd_address <= 'b0;
+            rd_addr_extended <= 'b0;
             rd_addr_change_internal <= 1'b0;
-            commited_rd_address_to_mac <= 10'b0;
+            commited_rd_address_to_mac <= 'b0;
 
             huge_page_qword_counter <= 32'b0;
             look_ahead_huge_page_qword_counter <= 32'b0;

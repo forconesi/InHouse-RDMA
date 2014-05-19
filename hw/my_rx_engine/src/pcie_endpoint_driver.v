@@ -1,5 +1,6 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
+`include "includes.v"
 
 module  pci_exp_64b_app (
 
@@ -29,14 +30,14 @@ module  pci_exp_64b_app (
     output                                        change_huge_page_ack,
     input                                         change_huge_page,
     input                                         send_last_tlp_change_huge_page,
-    output     [9:0]                              commited_rd_address,
+    output     [`BF+1:0]                          commited_rd_address,
     input      [4:0]                              qwords_to_send,
 
     //-------------------------------------------------------
     // To mac_rx_interface
     //-------------------------------------------------------
     output                                        rd_addr_change,
-    output     [9:0]                              rd_addr_extended,
+    output     [`BF+1:0]                          rd_addr_extended,
 
     //-------------------------------------------------------
     // To mac_host_configuration_interface
@@ -54,7 +55,7 @@ module  pci_exp_64b_app (
     //-------------------------------------------------------
     // To internal_true_dual_port_ram
     //-------------------------------------------------------
-    output     [8:0]                              rd_addr,
+    output     [`BF:0]                            rd_addr,
     input      [63:0]                             rd_data,
 
     // Rx Local-Link
@@ -253,7 +254,7 @@ module  pci_exp_64b_app (
         .trn_lnk_up_n ( trn_lnk_up_n ),             // I
 
         .trn_td ( trn_td ),                         // O [63:0]
-        .trn_trem_n ( trn_trem_n ),                     // O [7:0]
+        .trn_trem_n ( trn_trem_n ),                 // O [7:0]
         .trn_tsof_n ( trn_tsof_n ),                 // O
         .trn_teof_n ( trn_teof_n ),                 // O
         .trn_tsrc_rdy_n ( trn_tsrc_rdy_n ),         // O
@@ -275,12 +276,12 @@ module  pci_exp_64b_app (
         .change_huge_page_ack(change_huge_page_ack),          // O
         .change_huge_page(change_huge_page),                  // I
         .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),    // I
-        .rd_addr(rd_addr),                          // O [8:0]
+        .rd_addr(rd_addr),                          // O [`BF:0]
         .rd_data(rd_data),                          // I [63:0]
-        .commited_rd_address(commited_rd_address),  // O [9:0]
+        .commited_rd_address(commited_rd_address),  // O [`BF+1:0]
         .qwords_to_send(qwords_to_send),            // I [4:0]
         .rd_addr_change(rd_addr_change),            // O 
-        .commited_rd_address_to_mac(rd_addr_extended)     // O [9:0]
+        .commited_rd_address_to_mac(rd_addr_extended)     // O [`BF+1:0]
 
         );
 
