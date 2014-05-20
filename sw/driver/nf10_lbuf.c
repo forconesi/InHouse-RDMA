@@ -1,9 +1,11 @@
 #include <linux/etherdevice.h>
 #include "nf10.h"
 #include "nf10_lbuf.h"
-#include "skbpool.h"
 
+#ifdef CONFIG_SKBPOOL
+#include "skbpool.h"
 static struct skbpool_entry skb_free_list;
+#endif
 
 struct desc {
 	/* FIXME: one of pages and kern_addrs may not be needed */
@@ -22,26 +24,34 @@ static struct lbuf_hw {
 	struct nf10_adapter *adapter;
 	struct large_buffer lbuf;
 
+#ifdef CONFIG_SKBPOOL
 	struct skbpool_head rxq;
+#endif
 	struct workqueue_struct *rx_wq;
 	struct work_struct rx_work;
 } lbuf_hw;
 #define get_lbuf()	(&lbuf_hw.lbuf)
-#define get_rxq()	(&lbuf_hw.rxq)
 #define get_rx_work()	(&lbuf_hw.rx_work)
+#ifdef CONFIG_SKBPOOL
+#define get_rxq()	(&lbuf_hw.rxq)
+#endif
 
 /* profiling memcpy performance */
-//#define MEMCPY_PERF
-#ifdef MEMCPY_PERF
-#define DEFINE_TIMESTAMP()	u64	t = 0, t1, t2
-#define START_TIMESTAMP()	rdtscll(t1)
-#define STOP_TIMESTAMP()	do { rdtscll(t2); t += (t2 - t1); } while(0)
-#define GET_ELAPSED_CYCLES()	(t)
+#ifdef CONFIG_PROFILE
+/* WARN: note that it does not do bound check for performance */
+#define DEFINE_TIMESTAMP(n)	u64	_t1, _t2, _total[n] = {0}
+#define START_TIMESTAMP(i)	rdtscll(_t1)
+#define STOP_TIMESTAMP(i)	\
+	do {	\
+		rdtscll(_t2);	\
+		_total[i] += (_t2 - _t1);	\
+	} while(0)
+#define ELAPSED_CYCLES(i)	(_total[i])
 #else
-#define DEFINE_TIMESTAMP()
-#define START_TIMESTAMP()
-#define STOP_TIMESTAMP()
-#define GET_ELAPSED_CYCLES()	(0ULL)
+#define DEFINE_TIMESTAMP(n)
+#define START_TIMESTAMP(i)
+#define STOP_TIMESTAMP(i)
+#define ELAPSED_CYCLES(i)	(0ULL)
 #endif
 
 #define LBUF_SIZE	HPAGE_PMD_SIZE
@@ -160,26 +170,24 @@ static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx
 	inc_rx_cons(adapter);
 }
 
+#ifdef CONFIG_SKBPOOL
 static void nf10_lbuf_rx_worker(struct work_struct *work)
 {
 	struct nf10_adapter *adapter = lbuf_hw.adapter;
 	struct skbpool_entry *skb_entry, *p, *n;
-	static unsigned int rx_packets;
 	
 	skb_entry = skbpool_del_all(get_rxq());
 
 	if (skb_entry == NULL)
 		return;
 
-	skbpool_for_each_entry(p, skb_entry) {
+	skbpool_for_each_entry(p, skb_entry)
 		napi_gro_receive(&adapter->napi, p->skb);
-		rx_packets++;
-	}
-	pr_debug("rx_packets=%u\n", rx_packets);
 
 	skbpool_for_each_entry_safe(p, n, skb_entry)
 		skbpool_free(p);
 }
+#endif
 
 static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 {
@@ -194,10 +202,12 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	unsigned int rx_cons = lbuf->rx_cons;
 	unsigned int rx_packets = 0;
 	unsigned int data_len;
+#ifdef CONFIG_SKBPOOL
 	struct skbpool_entry *skb_entry = &skb_free_list;
 	struct skbpool_entry *skb_entry_first = NULL;	/* local header */
 	struct skbpool_entry *skb_entry_last = NULL;
-	DEFINE_TIMESTAMP();
+#endif
+	DEFINE_TIMESTAMP(3);
 
 	if (nr_qwords == 0 ||
 	    max_dword_idx > 524288) {	/* FIXME: replace constant */
@@ -210,7 +220,9 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	/* dword 1 to 31 are reserved */
 	dword_idx = 32;
 	do {
+#ifdef CONFIG_SKBPOOL
 		skbpool_prefetch_next(skb_entry);
+#endif
 
 		dword_idx++;			/* reserved for timestamp */
 		pkt_len = lbuf_addr[dword_idx++];
@@ -224,26 +236,38 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		}
 		data_len = pkt_len - 4;
 
+		START_TIMESTAMP(0);
+#ifdef CONFIG_SKBPOOL
 		if (unlikely((skb_entry = skbpool_alloc(skb_entry)) == NULL)) {
+#else
+		if ((skb = netdev_alloc_skb(netdev, data_len)) == NULL) {
+#endif
 			netif_err(adapter, rx_err, netdev,
 				  "rx_cons=%d failed to alloc skb", rx_cons);
 			goto next_pkt;
 		}
+		STOP_TIMESTAMP(0);
+#ifdef CONFIG_SKBPOOL
 		if (unlikely(skb_entry_first == NULL))
 			skb_entry_first = skb_entry;
 		skb_entry_last = skb_entry;
-
 		skb = skb_entry->skb;
+#endif
 
-		START_TIMESTAMP();
+		START_TIMESTAMP(1);
 		skb_copy_to_linear_data(skb, (void *)(lbuf_addr + dword_idx),
 					data_len);	/* memcpy */
-		STOP_TIMESTAMP();
+		STOP_TIMESTAMP(1);
 
 		skb_put(skb, data_len);
 		skb->protocol = eth_type_trans(skb, adapter->netdev);
 		skb->ip_summed = CHECKSUM_NONE;
 
+		START_TIMESTAMP(2);
+#ifndef CONFIG_SKBPOOL
+		napi_gro_receive(&adapter->napi, skb);
+#endif
+		STOP_TIMESTAMP(2);
 		rx_packets++;
 next_pkt:
 		dword_idx += pkt_len >> 2;	/* byte -> dword */
@@ -254,17 +278,20 @@ next_pkt:
 			dword_idx += 2;
 	} while(dword_idx < max_dword_idx);
 
+#ifdef CONFIG_SKBPOOL
 	if (likely(skb_entry_last)) {
 		skb_free_list = *skb_entry_last;
 		skbpool_add_batch(skb_entry_first, skb_entry_last, get_rxq());
 		queue_work(lbuf_hw.rx_wq, get_rx_work());
 	}
-
+#endif
 	adapter->netdev->stats.rx_packets += rx_packets;
 
 	netif_dbg(adapter, rx_status, adapter->netdev,
-		  "RX lbuf delivered nr_qwords=%u # of packets=%u/%lu mc=%llu\n",
-		  nr_qwords, rx_packets, adapter->netdev->stats.rx_packets, GET_ELAPSED_CYCLES());
+		  "RX lbuf delivered nr_qwords=%u rx_packets=%u/%lu" 
+		  " alloc=%llu memcpy=%llu skbpass=%llu\n",
+		  nr_qwords, rx_packets, adapter->netdev->stats.rx_packets,
+		  ELAPSED_CYCLES(0), ELAPSED_CYCLES(1), ELAPSED_CYCLES(2));
 
 	return 0;
 }
@@ -301,10 +328,9 @@ static struct nf10_user_ops lbuf_user_ops = {
 /* nf10_hw_ops functions */
 static int nf10_lbuf_init(struct nf10_adapter *adapter)
 {
+#ifdef CONFIG_SKBPOOL
 	int err;
-	lbuf_hw.adapter = adapter;
 
-	skbpool_head_init(get_rxq());
 	INIT_WORK(get_rx_work(), nf10_lbuf_rx_worker);
 	lbuf_hw.rx_wq = alloc_workqueue("lbuf_rx", WQ_MEM_RECLAIM, 0);
 	if (lbuf_hw.rx_wq == NULL) {
@@ -313,13 +339,15 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 		return -ENOMEM;
 	}
 
+	skbpool_head_init(get_rxq());
 	/* FIXME: replace constants */
 	if ((err = skbpool_init(adapter->netdev, 1518, 30000, 3000))) {
 		netif_err(adapter, rx_err, adapter->netdev,
 			  "failed to init skbpool\n");
 		return err;
 	}
-
+#endif
+	lbuf_hw.adapter = adapter;
 	adapter->user_ops = &lbuf_user_ops;
 
 	return 0;
@@ -327,10 +355,12 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 
 static void nf10_lbuf_free(struct nf10_adapter *adapter)
 {
+#ifdef CONFIG_SKBPOOL
 	skbpool_purge(&skb_free_list);
 	skbpool_purge_head(get_rxq());
 	skbpool_destroy();
 	destroy_workqueue(lbuf_hw.rx_wq);
+#endif
 }
 
 static int nf10_lbuf_init_buffers(struct nf10_adapter *adapter)
