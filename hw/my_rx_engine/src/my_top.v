@@ -206,8 +206,8 @@ module my_top (
     // Local Wires tlp_trigger
     //-------------------------------------------------------
 
-    wire   [`BF+1:0]                                  commited_wr_address;
-    wire   [`BF+1:0]                                  commited_rd_address;
+    wire   [`BF:0]                                    commited_wr_address;
+    wire   [`BF:0]                                    commited_rd_address;
     wire                                              trigger_tlp_ack;
     wire                                              trigger_tlp;
     wire                                              change_huge_page_ack;
@@ -218,7 +218,7 @@ module my_top (
     //-------------------------------------------------------
     // Local Wires mac_rx_interface
     //-------------------------------------------------------
-    wire   [`BF+1:0]                                  rd_addr_extended;
+    wire   [`BF:0]                                    rd_address_to_mac;
     wire                                              rd_addr_change;
 
     ////////////////////////////////////////////////
@@ -436,8 +436,8 @@ module my_top (
     tlp_trigger my_tlp_trigger (
         .clk156(wr_clk),                                        // I
         .reset_n(reset_n),                                      // I
-        .commited_wr_address(commited_wr_address),              // I [`BF+1:0]
-        .commited_rd_address(commited_rd_address),              // I [`BF+1:0]
+        .commited_wr_address(commited_wr_address),              // I [`BF:0]
+        .commited_rd_address(commited_rd_address),              // I [`BF:0]
         .trigger_tlp_ack(trigger_tlp_ack),                      // I
         .trigger_tlp(trigger_tlp),                              // O
         .change_huge_page_ack(change_huge_page_ack),            // I
@@ -446,7 +446,7 @@ module my_top (
         .qwords_to_send(qwords_to_send)                         // O [4:0]
         );
 
-    //assign commited_rd_address = (`BF+2)'b0;  // debug
+    //assign commited_rd_address = 'b0;  // debug
     //assign trigger_tlp_ack = 1'b0;  // debug
 
     //-------------------------------------------------------
@@ -463,9 +463,9 @@ module my_top (
         .wr_addr(wr_addr),                     // O [`BF:0]
         .wr_data(wr_data),                     // O [63:0]
         .wr_en(wr_en),                         // O
-        .commited_wr_address(commited_wr_address),  // O [`BF+1:0]
+        .commited_wr_address(commited_wr_address),  // O [`BF:0]
         .rd_addr_change(rd_addr_change),        // I
-        .rd_addr_extended(rd_addr_extended)    // I [`BF+1:0]
+        .rd_addr(rd_address_to_mac)    // I [`BF:0]
         );
 
     //-------------------------------------------------------
@@ -501,14 +501,14 @@ module my_top (
         .change_huge_page_ack(change_huge_page_ack),        // O
         .change_huge_page(change_huge_page),                // I
         .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),        // I
-        .commited_rd_address(commited_rd_address),          // O [`BF+1:0]
+        .commited_rd_address(commited_rd_address),          // O [`BF:0]
         .qwords_to_send(qwords_to_send),                    // I [4:0]
         
         //-------------------------------------------------------
         // To mac_rx_interface
         //-------------------------------------------------------
         .rd_addr_change(rd_addr_change),                    // O
-        .rd_addr_extended(rd_addr_extended),                // O [`BF+1:0]
+        .rd_address_to_mac(rd_address_to_mac),                // O [`BF:0]
 
         //-------------------------------------------------------
         // To mac_host_configuration_interface

@@ -39,12 +39,12 @@ module wr_rx_pkt_to_hugepages (
     output reg             change_huge_page_ack,
     input                  change_huge_page,     // 156.25 MHz domain driven
     input                  send_last_tlp_change_huge_page,          // 156.25 MHz domain driven
-    output      [`BF:0]    rd_addr,
+    output reg  [`BF:0]    rd_addr,
     input       [63:0]     rd_data,
-    output reg  [`BF+1:0]  commited_rd_address,
+    output reg  [`BF:0]    commited_rd_address,
     input       [4:0]      qwords_to_send,        // 156.25 MHz domain driven
     output reg             rd_addr_change,        
-    output reg  [`BF+1:0]  commited_rd_address_to_mac
+    output reg  [`BF:0]    commited_rd_address_to_mac
 
     );
 
@@ -104,7 +104,7 @@ module wr_rx_pkt_to_hugepages (
     reg     [14:0]  state;
 
     reg     [8:0]   tlp_qword_counter;
-    reg     [`BF+1:0]   next_rd_address;
+    reg     [`BF:0]   next_rd_address;
     reg     [31:0]  tlp_number;
     reg     [31:0]  look_ahead_tlp_number;
     reg     [8:0]   qwords_in_tlp;
@@ -113,11 +113,10 @@ module wr_rx_pkt_to_hugepages (
     reg     [31:0]  huge_page_qword_counter;
     reg     [31:0]  look_ahead_huge_page_qword_counter;
     reg             endpoint_not_ready;
-    reg     [`BF+1:0]   rd_addr_extended;
     reg             remember_to_change_huge_page;
     reg             rd_addr_change_internal;
-    reg     [`BF+1:0]   rd_addr_extended_prev1;
-    reg     [`BF+1:0]   rd_addr_extended_prev2;
+    reg     [`BF:0]   rd_addr_prev1;
+    reg     [`BF:0]   rd_addr_prev2;
     
     assign reset_n = ~trn_lnk_up_n;
 
@@ -284,8 +283,6 @@ module wr_rx_pkt_to_hugepages (
         end     // not reset
     end  //always
 
-    assign rd_addr = rd_addr_extended[`BF:0];
-
     ////////////////////////////////////////////////
     // write request TLP generation to huge_page
     ////////////////////////////////////////////////
@@ -306,7 +303,7 @@ module wr_rx_pkt_to_hugepages (
 
             commited_rd_address <= 'b0;
             next_rd_address <= 'b0;
-            rd_addr_extended <= 'b0;
+            rd_addr <= 'b0;
             rd_addr_change_internal <= 1'b0;
             commited_rd_address_to_mac <= 'b0;
 
@@ -328,8 +325,8 @@ module wr_rx_pkt_to_hugepages (
         else begin  // not reset
 
             rd_addr_change_internal <= 1'b0;                     // default value. Used to signal a change in commited_rd_address_to_mac to other clock domain
-            rd_addr_extended_prev1 <= rd_addr_extended;
-            rd_addr_extended_prev2 <= rd_addr_extended_prev1;
+            rd_addr_prev1 <= rd_addr;
+            rd_addr_prev2 <= rd_addr_prev1;
 
             case (state)
 
@@ -361,7 +358,7 @@ module wr_rx_pkt_to_hugepages (
                     rd_addr_change_internal <= 1'b1;
                     commited_rd_address_to_mac <= commited_rd_address;                    // This signal is used to point the position in the buffer so no overrun ocurres. It's used with the above signal
 
-                    rd_addr_extended <= commited_rd_address;                            // Address the internal buffer with the last position of the rd pointer
+                    rd_addr <= commited_rd_address;                            // Address the internal buffer with the last position of the rd pointer
 
                     qwords_in_tlp <= {4'b0, qwords_to_send_reg1};
                     next_rd_address <= commited_rd_address + qwords_to_send_reg1;
@@ -393,7 +390,7 @@ module wr_rx_pkt_to_hugepages (
                             };
                     trn_tsof_n <= 1'b0;
                     trn_tsrc_rdy_n <= 1'b0;
-                    rd_addr_extended <= rd_addr_extended +1;      // start addressing internal memory
+                    rd_addr <= rd_addr +1;      // start addressing internal memory
 
                     look_ahead_host_mem_addr <= host_mem_addr + {qwords_in_tlp, 3'b0};                                 // host_addr is at byte level (QWs * 8)
                     look_ahead_huge_page_qword_counter <= huge_page_qword_counter + qwords_in_tlp;
@@ -411,7 +408,7 @@ module wr_rx_pkt_to_hugepages (
                         trigger_tlp_ack_internal <= 1'b1;
 
                         if (!endpoint_not_ready) begin
-                            rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
+                            rd_addr <= rd_addr +1;      // addressing internal memory
                             state <= s4;
                         end
                         else begin
@@ -420,7 +417,7 @@ module wr_rx_pkt_to_hugepages (
                     end
                     else begin
                         endpoint_not_ready <= 1'b1;
-                        rd_addr_extended <= rd_addr_extended_prev1;          //rd_addr_extended_minus_two
+                        rd_addr <= rd_addr_prev1;          //rd_addr_minus_two
                     end
                     tlp_qword_counter <= 9'b1;
                 end
@@ -431,7 +428,7 @@ module wr_rx_pkt_to_hugepages (
                         trn_tsrc_rdy_n <= 1'b0;
                         trn_td <= {rd_data[7:0], rd_data[15:8], rd_data[23:16], rd_data[31:24], rd_data[39:32], rd_data[47:40], rd_data[55:48] ,rd_data[63:56]};    // DW swap and byte swap      // in vhdl use a for loop
 
-                        rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
+                        rd_addr <= rd_addr +1;      // addressing internal memory
 
                         tlp_qword_counter <= tlp_qword_counter +1;
                         if (tlp_qword_counter == qwords_in_tlp) begin
@@ -440,7 +437,7 @@ module wr_rx_pkt_to_hugepages (
                         end
                     end
                     else begin
-                        rd_addr_extended <= rd_addr_extended_prev2;          //rd_addr_extended_minus_two
+                        rd_addr <= rd_addr_prev2;          //rd_addr_minus_two
                         state <= s6;
                     end
                 end
@@ -461,7 +458,7 @@ module wr_rx_pkt_to_hugepages (
                 s6 : begin
                     trigger_tlp_ack_internal <= 1'b0;                   // If it came from s4
                     if (!trn_tdst_rdy_n) begin
-                        rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
+                        rd_addr <= rd_addr +1;      // addressing internal memory
                         trn_tsrc_rdy_n <= 1'b1;
                         state <= s7;
                     end
@@ -469,7 +466,7 @@ module wr_rx_pkt_to_hugepages (
 
                 s7 : begin
                     trn_tsrc_rdy_n <= 1'b1;
-                    rd_addr_extended <= rd_addr_extended +1;      // addressing internal memory
+                    rd_addr <= rd_addr +1;      // addressing internal memory
                     state <= s4;
                 end
                 

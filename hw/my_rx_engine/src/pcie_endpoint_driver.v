@@ -30,14 +30,14 @@ module  pci_exp_64b_app (
     output                                        change_huge_page_ack,
     input                                         change_huge_page,
     input                                         send_last_tlp_change_huge_page,
-    output     [`BF+1:0]                          commited_rd_address,
+    output     [`BF:0]                            commited_rd_address,
     input      [4:0]                              qwords_to_send,
 
     //-------------------------------------------------------
     // To mac_rx_interface
     //-------------------------------------------------------
     output                                        rd_addr_change,
-    output     [`BF+1:0]                          rd_addr_extended,
+    output     [`BF:0]                            rd_address_to_mac,
 
     //-------------------------------------------------------
     // To mac_host_configuration_interface
@@ -278,10 +278,10 @@ module  pci_exp_64b_app (
         .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),    // I
         .rd_addr(rd_addr),                          // O [`BF:0]
         .rd_data(rd_data),                          // I [63:0]
-        .commited_rd_address(commited_rd_address),  // O [`BF+1:0]
+        .commited_rd_address(commited_rd_address),  // O [`BF:0]
         .qwords_to_send(qwords_to_send),            // I [4:0]
         .rd_addr_change(rd_addr_change),            // O 
-        .commited_rd_address_to_mac(rd_addr_extended)     // O [`BF+1:0]
+        .commited_rd_address_to_mac(rd_address_to_mac)     // O [`BF:0]
 
         );
 
