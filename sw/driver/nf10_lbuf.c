@@ -86,6 +86,9 @@ retry:
 			LBUF_SIZE, rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
 	if (pci_dma_mapping_error(adapter->pdev, desc->dma_addr)) {
 		free_lbuf(desc->page);
+		netif_err(adapter, probe, adapter->netdev,
+			  "failed to map to dma addr (kern_addr=%p)\n",
+			  desc->kern_addr);
 		return -EIO;
 	}
 

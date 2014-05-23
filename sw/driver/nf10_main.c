@@ -9,6 +9,9 @@
 
 #include "nf10.h"
 #include "nf10_fops.h"
+#ifdef CONFIG_XEN_NF_BACKEND
+#include "xen_nfback.h"
+#endif
 
 u64 nf10_test_dev_addr = 0x000f530dd165;
 
@@ -259,6 +262,11 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		       nf10_napi_budget(adapter));
 	napi_enable(&adapter->napi);
 
+#ifdef CONFIG_XEN_NF_BACKEND
+	if (xen_nfback_init())
+		pr_warn("failed to init xen nfback\n");
+#endif
+
 	netif_info(adapter, probe, netdev, "probe is done successfully\n");
 
 	return 0;
@@ -298,6 +306,9 @@ static void nf10_remove(struct pci_dev *pdev)
 
 	netdev = adapter->netdev;
 
+#ifdef CONFIG_XEN_NF_BACKEND
+	xen_nfback_fini();
+#endif
 	nf10_remove_fops(adapter);
 	netif_napi_del(&adapter->napi);
 	napi_disable(&adapter->napi);
