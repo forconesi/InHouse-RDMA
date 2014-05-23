@@ -69,15 +69,27 @@ static inline void free_lbuf(struct page *page)
 static void unmap_and_free_lbuf(struct nf10_adapter *adapter,
 				struct desc *desc, int rx)
 {
+#ifdef CONFIG_LBUF_COHERENT
+	pci_free_consistent(adapter->pdev, LBUF_SIZE,
+			    desc->kern_addr, desc->dma_addr);
+#else
 	pci_unmap_single(adapter->pdev, desc->dma_addr, LBUF_SIZE,
 			rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
 	free_lbuf(desc->page);
+#endif
 }
 
 static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
 			      struct desc *desc, int rx)
 {
 retry:
+#ifdef CONFIG_LBUF_COHERENT
+	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
+					       &desc->dma_addr);
+	if (desc->kern_addr == NULL)
+		return -ENOMEM;
+	desc->page = virt_to_page(desc->kern_addr);
+#else
 	if ((desc->page = alloc_lbuf()) == NULL)
 		return -ENOMEM;
 
@@ -91,6 +103,7 @@ retry:
 			  desc->kern_addr);
 		return -EIO;
 	}
+#endif
 
 	/* FIXME: due to the current HW constraint, dma bus address should
 	 * not be within 32bit address space. So, this fixup will be removed */

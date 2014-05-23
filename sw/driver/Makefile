@@ -15,6 +15,7 @@ ccflags-y += -g -DDEBUG
 ccflags-$(CONFIG_XEN_NF_BACKEND) += -DCONFIG_XEN_NF_BACKEND
 ccflags-$(CONFIG_SKBPOOL) += -DCONFIG_SKBPOOL
 ccflags-$(CONFIG_PROFILE) += -DCONFIG_PROFILE
+ccflags-$(CONFIG_LBUF_COHERENT) += -DCONFIG_LBUF_COHERENT
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
