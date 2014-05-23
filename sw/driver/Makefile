@@ -6,6 +6,7 @@ nf10-objs += nf10_ethtool.o
 nf10-objs += nf10_fops.o
 ifeq ($(CONFIG_XEN_NF_BACKEND),y)
 nf10-objs += xen_nfback.o
+CONFIG_LBUF_COHERENT=y
 endif
 ifeq ($(CONFIG_SKBPOOL),y)
 nf10-objs += skbpool.o
