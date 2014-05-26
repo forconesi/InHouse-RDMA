@@ -1,7 +1,17 @@
 #include <xen/xenbus.h>
-#include <xen/events.h>
-#include <xen/interface/io/netif.h>
-#include <linux/netdevice.h>	/* IFNAMSIZ */
+#include <xen/events.h>			/* evtchn */
+#include <xen/interface/io/netif.h>	/* ring and gnttab */
+#include <linux/netdevice.h>		/* IFNAMSIZ */
+
+#define XEN_NETIF_TX_RING_SIZE __CONST_RING_SIZE(xen_netif_tx, PAGE_SIZE)
+#define XEN_NETIF_RX_RING_SIZE __CONST_RING_SIZE(xen_netif_rx, PAGE_SIZE)
+
+/* MAX_GRANT_COPY_OPS used to be (MAX_SKB_FRAGS * XEN_NETIF_RX_RING_SIZE),
+ * since 64KB can be copied by using a single RX ring entry by means of gso.
+ * But, nfback doesn't mind gso and uses its own buffer implementation 
+ * regardless of skb or gso */
+/* FIXME: 1! */
+#define MAX_GRANT_COPY_OPS (1 * XEN_NETIF_RX_RING_SIZE)
 
 struct xenvif {
 	/* Unique identifier for this interface. */
@@ -24,6 +34,9 @@ struct xenvif {
 	/* Only used when feature-split-event-channels = 1 */
 	char rx_irq_name[IFNAMSIZ+4]; /* DEVNAME-rx */
 	struct xen_netif_rx_back_ring rx;
+
+	/* This array is allocated seperately as it is large */ 
+	struct gnttab_copy *grant_copy_op;
 };
 
 struct backend_info {
@@ -78,10 +91,19 @@ struct xenvif *xenvif_alloc(struct device *parent, domid_t domid,
 	if ((vif = kzalloc(sizeof(struct xenvif), GFP_KERNEL)) == NULL)
 		return NULL;
 
+	snprintf(vif->name, IFNAMSIZ - 1, "vif%u.%u", domid, handle);
+	vif->grant_copy_op = vmalloc(sizeof(struct gnttab_copy) *
+			MAX_GRANT_COPY_OPS);	/* FIXME */
+	if (vif->grant_copy_op == NULL) {
+		pr_warn("Could not allocate grant copy space for %s\n",
+				vif->name);
+		kfree(vif);
+		return ERR_PTR(-ENOMEM);
+	}
+
 	vif->domid  = domid;
 	vif->handle = handle;
 	vif->parent_dev = parent;
-	snprintf(vif->name, IFNAMSIZ - 1, "vif%u.%u", domid, handle);
 
 	pr_debug("Successfully created xenvif\n");
 #if 0
@@ -354,6 +376,8 @@ static void backend_create_xenvif(struct backend_info *be)
 		return;
 	}
 
+	/* TODO: should register vif to nf core */
+
 	kobject_uevent(&dev->dev.kobj, KOBJ_ONLINE);
 }
 
@@ -388,6 +412,7 @@ static void backend_connect(struct backend_info *be)
 
 void xenvif_free(struct xenvif *vif)
 {
+	vfree(vif->grant_copy_op);
 	kfree(vif);
 #if 0
 	module_put(THIS_MODULE);
@@ -633,11 +658,11 @@ static const struct xenbus_device_id nfback_ids[] = {
 };
 
 static DEFINE_XENBUS_DRIVER(nfback, ,
-		.probe = nfback_probe,
-		.remove = nfback_remove,
-		.uevent = nfback_uevent,
-		.otherend_changed = frontend_changed,
-		);
+	.probe = nfback_probe,
+	.remove = nfback_remove,
+	.uevent = nfback_uevent,
+	.otherend_changed = frontend_changed,
+);
 
 int xen_nfback_init(void)
 {
@@ -648,4 +673,11 @@ void xen_nfback_fini(void)
 {
 	if (registered)
 		xenbus_unregister_driver(&nfback_driver);
+}
+
+/* packet processing part interacting with nf dma engine (e.g., lbuf)
+ * nf core should identify which vif is a destination */
+int xenvif_rx_action(struct xenvif *vif, void *buf_addr, size_t size)
+{
+	return 0;
 }

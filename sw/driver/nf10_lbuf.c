@@ -434,7 +434,7 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 				    LBUF_SIZE, PCI_DMA_FROMDEVICE);
 #endif
 	/* if direct user access mode is enabled, just wake up
-	 * a waiting user thread */
+	 * a waiting user thread. FIXME: replace with API */
 	if (adapter->nr_user_mmap > 0) { 
 		if (likely(waitqueue_active(&adapter->wq_user_intr)))
 			wake_up(&adapter->wq_user_intr);
