@@ -168,9 +168,15 @@ static void inc_rx_cons(struct nf10_adapter *adapter)
 static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx)
 {
 	struct large_buffer *lbuf = get_lbuf();
+	dma_addr_t dma_addr = lbuf->descs[RX][idx].dma_addr;
 
-	nf10_writeq(adapter, rx_addr_off(idx), 
-		    lbuf->descs[RX][idx].dma_addr);
+#ifndef CONFIG_LBUF_COHERENT
+	/* this function can be called from user thread via ioctl,
+	 * so this mapping should be done safely in that case */
+	pci_dma_sync_single_for_device(adapter->pdev, dma_addr,
+				       LBUF_SIZE, PCI_DMA_FROMDEVICE);
+#endif
+	nf10_writeq(adapter, rx_addr_off(idx), dma_addr);
 	nf10_writel(adapter, rx_stat_off(idx), RX_READY);
 
 	netif_dbg(adapter, rx_status, adapter->netdev,
@@ -420,14 +426,23 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	dma_addr = rx_descs[rx_cons].dma_addr;
 	kern_addr = rx_descs[rx_cons].kern_addr;
 
+#ifndef CONFIG_LBUF_COHERENT
 	pci_dma_sync_single_for_cpu(adapter->pdev, dma_addr,
 				    LBUF_SIZE, PCI_DMA_FROMDEVICE);
+#endif
+	/* if direct user access mode is enabled, just wake up
+	 * a waiting user thread */
+	if (adapter->nr_user_mmap > 0) { 
+		if (likely(waitqueue_active(&adapter->wq_user_intr)))
+			wake_up(&adapter->wq_user_intr);
+		/* in case a user thread has mapped rx buffers, but
+		 * not waiting for an interrupt, just skip it while granting
+		 * an opportunity for the thread to poll buffers later */
+		return;
+	}
 
 	/* currently, just process one large buffer, regardless of budget */
 	nf10_lbuf_deliver_skbs(adapter, kern_addr);
-	pci_dma_sync_single_for_device(adapter->pdev, dma_addr,
-				       LBUF_SIZE, PCI_DMA_FROMDEVICE);
-
 	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
 	*work_done = 1;
 }

@@ -121,10 +121,7 @@ irqreturn_t nf10_interrupt_handler(int irq, void *data)
 
 	/* TODO: IRQ disable */
 	
-	if (adapter->nr_user_mmap == 0)
-		napi_schedule(&adapter->napi);
-	else if (waitqueue_active(&adapter->wq_user_intr))
-		wake_up(&adapter->wq_user_intr);
+	napi_schedule(&adapter->napi);
 
 	return IRQ_HANDLED;
 }
