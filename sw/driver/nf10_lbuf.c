@@ -454,7 +454,6 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 			size -= unit;
 		}
 		*work_done = 1;
-		return;
 	}
 	else
 #endif
