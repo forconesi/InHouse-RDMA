@@ -2,6 +2,8 @@
 #include <xen/events.h>			/* evtchn */
 #include <xen/interface/io/netif.h>	/* ring and gnttab */
 #include <linux/netdevice.h>		/* IFNAMSIZ */
+#include <asm/xen/page.h>		/* virt_to_mfn */
+
 
 #define XEN_NETIF_TX_RING_SIZE __CONST_RING_SIZE(xen_netif_tx, PAGE_SIZE)
 #define XEN_NETIF_RX_RING_SIZE __CONST_RING_SIZE(xen_netif_rx, PAGE_SIZE)
@@ -37,7 +39,12 @@ struct xenvif {
 
 	/* This array is allocated seperately as it is large */ 
 	struct gnttab_copy *grant_copy_op;
+
+	struct {
+		int id;
+	} meta[XEN_NETIF_RX_RING_SIZE];
 };
+struct xenvif *FIXME_vif;	/* FIXME after classification support of nf */
 
 struct backend_info {
 	struct xenbus_device *dev;
@@ -377,6 +384,7 @@ static void backend_create_xenvif(struct backend_info *be)
 	}
 
 	/* TODO: should register vif to nf core */
+	FIXME_vif = be->vif;
 
 	kobject_uevent(&dev->dev.kobj, KOBJ_ONLINE);
 }
@@ -675,9 +683,132 @@ void xen_nfback_fini(void)
 		xenbus_unregister_driver(&nfback_driver);
 }
 
-/* packet processing part interacting with nf dma engine (e.g., lbuf)
- * nf core should identify which vif is a destination */
-int xenvif_rx_action(struct xenvif *vif, void *buf_addr, size_t size)
+/* followings are helper functions for data tx/rx */
+bool xenvif_rx_ring_slots_available(struct xenvif *vif, int needed)
+{       
+	RING_IDX prod, cons;
+
+	do {
+		prod = vif->rx.sring->req_prod;
+		cons = vif->rx.req_cons;
+
+		if (prod - cons >= needed)
+			return true;
+
+		vif->rx.sring->req_event = prod + 1;
+
+		/* Make sure event is visible before we check prod
+		 * again.
+		 */
+		mb();
+	} while (vif->rx.sring->req_prod != prod);
+
+	return false;
+}
+
+static struct xen_netif_rx_response *make_rx_response(struct xenvif *vif,
+						      u16      id,
+						      s8       st,
+						      u16      offset,
+						      u16      size,
+						      u16      flags)
 {
+	RING_IDX i = vif->rx.rsp_prod_pvt;
+	struct xen_netif_rx_response *resp;
+
+	resp = RING_GET_RESPONSE(&vif->rx, i);
+	resp->offset     = offset;
+	resp->flags      = flags;
+	resp->id         = id;
+	resp->status     = (s16)size;
+	if (st < 0)
+		resp->status = (s16)st;
+
+	vif->rx.rsp_prod_pvt = ++i;
+
+	return resp;
+}
+
+/* packet processing part interacting with nf dma engine (e.g., lbuf)
+ * nf core should identify domid, by which vif is located */
+int xenvif_rx_action(unsigned long domid, void *buf_addr, size_t size)
+{
+	RING_IDX max_slots_needed;
+	unsigned copy_prod, copy_cons;
+	struct gnttab_copy *copy;
+	size_t remaining_size;
+	unsigned long bytes;
+	struct xen_netif_rx_request *req;
+	struct xen_netif_rx_response *resp;
+	int status;
+	int ret;
+	bool need_to_notify = false;
+	struct xenvif *vif = FIXME_vif;	/* FIXME */
+	if (vif == NULL)
+		return -1;
+
+	max_slots_needed = DIV_ROUND_UP(size, PAGE_SIZE);
+	pr_debug("max_slots_needed=%u\n", max_slots_needed);
+
+	if (!xenvif_rx_ring_slots_available(vif, max_slots_needed)) {
+		/* TODO: keep it back, notify, and try again */
+		pr_warn("RX ring is NOT available now!!!\n");
+		return -EIO;
+	}
+
+	for (copy_prod = 0, remaining_size = size;
+	     remaining_size > 0;
+	     copy_prod++, remaining_size -= PAGE_SIZE, buf_addr += PAGE_SIZE) {
+		req = RING_GET_REQUEST(&vif->rx, vif->rx.req_cons++);
+		vif->meta[copy_prod].id = req->id;	/* keep id for resp */
+		bytes = remaining_size < PAGE_SIZE ? remaining_size : PAGE_SIZE;
+
+		copy = vif->grant_copy_op + copy_prod;
+		copy->flags = GNTCOPY_dest_gref;
+		copy->len = bytes;
+
+		copy->source.domid = DOMID_SELF;
+		copy->source.u.gmfn = virt_to_mfn(buf_addr);
+		copy->source.offset = 0;
+
+		copy->dest.domid = vif->domid;
+		copy->dest.offset = 0;
+		copy->dest.u.ref = req->gref;
+#if 0
+		pr_debug("[copy_prod=%u] id=%u d%d->d%d addr=%p mfn=%lx bytes=%lu ref=%u\n",
+			 req->id, copy_prod, DOMID_SELF, vif->domid, buf_addr,
+			 copy->source.u.gmfn, bytes, req->gref);
+#endif
+	}
+
+	BUG_ON(copy_prod > MAX_GRANT_COPY_OPS);
+	gnttab_batch_copy(vif->grant_copy_op, copy_prod);
+
+	for (copy_cons = 0, remaining_size = size;
+	     remaining_size > 0;
+	     copy_cons++, remaining_size -= PAGE_SIZE) {
+		bytes = remaining_size < PAGE_SIZE ? remaining_size : PAGE_SIZE;
+		copy = vif->grant_copy_op + copy_cons;
+		status = copy->status == GNTST_okay ?
+			XEN_NETIF_RSP_OKAY : XEN_NETIF_RSP_ERROR;
+
+		/* FIXME: last flag arg to be appropriate like
+		 * XEN_NETRXF_data_validated */
+		resp = make_rx_response(vif, vif->meta[copy_cons].id,
+					status, 0, bytes, 0);  
+
+		RING_PUSH_RESPONSES_AND_CHECK_NOTIFY(&vif->rx, ret);
+
+		need_to_notify |= !!ret;
+#if 0
+		pr_debug("[copy_cons=%u] id=%u status=%d bytes=%lu ret=%d need_to_notify=%d\n",
+			 copy_cons, vif->meta[copy_cons].id, status, bytes, ret, need_to_notify);
+#endif
+	}
+	if (need_to_notify)
+		notify_remote_via_irq(vif->rx_irq);
+
+	pr_debug("end of deliverying to frontend\n");
+
 	return 0;
 }

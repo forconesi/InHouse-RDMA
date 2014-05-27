@@ -7,6 +7,9 @@
 #include <linux/pci.h>
 #include <linux/cdev.h>
 #include "nf10_lbuf.h"
+#ifdef CONFIG_XEN_NF_BACKEND
+#include "xen_nfback.h"
+#endif
 
 #define NF10_VENDOR_ID	0x10ee
 #define NF10_DEVICE_ID	0x4245

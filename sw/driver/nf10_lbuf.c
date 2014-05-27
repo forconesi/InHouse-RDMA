@@ -443,9 +443,24 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 		 * an opportunity for the thread to poll buffers later */
 		return;
 	}
-
+#ifdef CONFIG_XEN_NF_BACKEND
+	/* FIXME: test code */
+	if (1) {
+		unsigned long size = LBUF_SIZE;
+		unsigned long unit = size >> 3;	/* divided by 8, so 256K at a time */
+		while (size > 0 &&
+		       xenvif_rx_action(1, kern_addr, unit) == 0) {
+			kern_addr += unit;
+			size -= unit;
+		}
+		*work_done = 1;
+		return;
+	}
+	else
+#endif
 	/* currently, just process one large buffer, regardless of budget */
 	nf10_lbuf_deliver_skbs(adapter, kern_addr);
+
 	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
 	*work_done = 1;
 }

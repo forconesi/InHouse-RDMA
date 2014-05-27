@@ -9,9 +9,6 @@
 
 #include "nf10.h"
 #include "nf10_fops.h"
-#ifdef CONFIG_XEN_NF_BACKEND
-#include "xen_nfback.h"
-#endif
 
 u64 nf10_test_dev_addr = 0x000f530dd165;
 
