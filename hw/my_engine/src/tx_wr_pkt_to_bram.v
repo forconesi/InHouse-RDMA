@@ -3,12 +3,9 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 `timescale 1ns/1ns
 
-`define RX_MEM_RD32_FMT_TYPE 7'b00_00000
-`define RX_MEM_WR32_FMT_TYPE 7'b10_00000
-`define RX_MEM_RD64_FMT_TYPE 7'b01_00000
-`define RX_MEM_WR64_FMT_TYPE 7'b11_00000
-`define RX_IO_RD32_FMT_TYPE  7'b00_00010
-`define RX_IO_WR32_FMT_TYPE  7'b10_00010
+`define CPL_MEM_RD64_FMT_TYPE 7'b10_01010
+`define SC 3'b000
+
 
 module tx_wr_pkt_to_bram (
 
@@ -23,138 +20,348 @@ module tx_wr_pkt_to_bram (
     input                   trn_rsrc_dsc_n,
     input       [6:0]       trn_rbar_hit_n,
     input                   trn_rdst_rdy_n,
-    output reg  [63:0]      huge_page_addr_1,
-    output reg  [63:0]      huge_page_addr_2,
-    output reg              huge_page_to_hw_1,
-    output reg              huge_page_to_hw_2,
-    input                   huge_page_to_host_1,
-    input                   huge_page_to_host_2,
+
+    input       [63:0]      huge_page_addr_1,
+    input       [63:0]      huge_page_addr_2,
+    input       [31:0]      huge_page_qwords_1,
+    input       [31:0]      huge_page_qwords_2,
+    input                   huge_page_status_1,
+    input                   huge_page_status_2,
+    output reg              huge_page_free_1,
+    output reg              huge_page_free_2,
+
+    output reg   [63:0]     huge_page_addr_read_from,
+    output reg              read_chunk,
+    input                   read_chunk_ack,
 
     // Internal memory driver
-    output      [8:0]       wr_addr,
+    output reg  [`BF:0]     wr_addr,
     output reg  [63:0]      wr_data,
-    output reg              wr_en
+    output reg              wr_en,
+
+    input       [`BF:0]     commited_rd_address,             // 156.25 MHz driven
+    input                   commited_rd_address_change,      // 156.25 MHz driven
+    output reg              wr_addr_updated                  // to 156.25 MHz
     );
 
+    wire            reset_n;
+
     // localparam
-    localparam s0 = 8'b00000000;
-    localparam s1 = 8'b00000001;
-    localparam s2 = 8'b00000010;
-    localparam s3 = 8'b00000100;
+    localparam s0  = 15'b000000000000000;
+    localparam s1  = 15'b000000000000001;
+    localparam s2  = 15'b000000000000010;
+    localparam s3  = 15'b000000000000100;
+    localparam s4  = 15'b000000000001000;
+    localparam s5  = 15'b000000000010000;
+    localparam s6  = 15'b000000000100000;
+    localparam s7  = 15'b000000001000000;
+    localparam s8  = 15'b000000010000000;
+    localparam s9  = 15'b000000100000000;
+    localparam s10 = 15'b000001000000000;
+    localparam s11 = 15'b000010000000000;
+    localparam s12 = 15'b000100000000000;
+    localparam s13 = 15'b001000000000000;
+    localparam s14 = 15'b010000000000000;
+    localparam s15 = 15'b100000000000000;
 
-    // Local wires and reg
-    wire            reset_n = ~trn_lnk_up_n;
+    //-------------------------------------------------------
+    // Local 156.25 MHz signal synch
+    //-------------------------------------------------------
+    reg     [`BF:0] commited_rd_address_reg0;
+    reg     [`BF:0] commited_rd_address_reg1;
+    reg             commited_rd_address_change_reg0;
+    reg             commited_rd_address_change_reg1;
+    
+    //-------------------------------------------------------
+    // Local current_huge_page_addr
+    //-------------------------------------------------------
+    reg     [63:0]  current_huge_page_addr;
+    reg     [14:0]  give_huge_page_fsm;
+    reg     [14:0]  free_huge_page_fsm;
+    reg             huge_page_available;
 
-    reg     [7:0]   fsm;
-    reg             capture_huge_page_1;
-    reg             capture_huge_page_2;
+    //-------------------------------------------------------
+    // Local trigger_rd_tlp
+    //-------------------------------------------------------   
+    reg             return_huge_page_to_host;
+    reg     [14:0]  trigger_rd_tlp_fsm;
+    reg     [`BF:0] diff;
+    reg     [9:0]   data_counter;                                   // the width can be less
+    reg     [9:0]   qwords_counter;                                   // the width can be less
+    reg     [9:0]   look_ahead_qwords_counter;
+    reg     [63:0]  look_ahead_huge_page_addr_read_from;
+
+    //-------------------------------------------------------
+    // Local pulse generation for 156.25 MHz domain
+    //-------------------------------------------------------
+    reg     [14:0]  pulse_gen_fsm1;
+
+    //-------------------------------------------------------
+    // Local completion_tlp & write to bram (wr_to_bram_fsm)
+    //-------------------------------------------------------
+    reg     [14:0]  wr_to_bram_fsm;
+    reg             receiving_completion;
+    reg             wr_addr_updated_internal;
+    reg     [9:0]   data_on_tlp;
+    
+    assign reset_n = ~trn_lnk_up_n;
 
     ////////////////////////////////////////////////
-    // huge_page_status
+    // 156.25 MHz signal synch
     ////////////////////////////////////////////////
     always @( posedge trn_clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
-            huge_page_to_hw_1 <= 1'b0;
-            huge_page_to_hw_2 <= 1'b0;
+            commited_rd_address_reg0 <= 'b0;
+            commited_rd_address_reg1 <= 'b0;
+            commited_rd_address_change_reg0 <= 1'b0;
+            commited_rd_address_change_reg1 <= 1'b0;
         end
-        
-        else begin  // not reset
-            if (capture_huge_page_1) huge_page_to_hw_1 <= 1'b1;
-            else if (huge_page_to_host_1) huge_page_to_hw_1 <= 1'b0;
 
-            if (capture_huge_page_2) huge_page_to_hw_2 <= 1'b1;
-            else if (huge_page_to_host_2) huge_page_to_hw_2 <= 1'b0;
+        else begin  // not reset
+            commited_rd_address_reg0 <= commited_rd_address;
+
+            commited_rd_address_change_reg0 <= commited_rd_address_change;
+            commited_rd_address_change_reg1 <= commited_rd_address_change_reg0;
+
+            if (commited_rd_address_change_reg1) begin
+                commited_rd_address_reg1 <= commited_rd_address_reg0;
+            end
 
         end     // not reset
     end  //always
 
     ////////////////////////////////////////////////
-    // huge_page_address and unlock TLP reception
+    // current_huge_page_addr
     ////////////////////////////////////////////////
     always @( posedge trn_clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
-            capture_huge_page_1 <= 1'b0;
-            capture_huge_page_2 <= 1'b0;
-            huge_page_addr_1 <= 64'b0;
-            huge_page_addr_2 <= 64'b0;
-            fsm <= s0;
+            huge_page_free_1 <= 1'b0;
+            huge_page_free_2 <= 1'b0;
+            huge_page_available <= 1'b0;
+            current_huge_page_addr <= 64'b0;
+            give_huge_page_fsm <= s0;
+            free_huge_page_fsm <= s0;
+        end
+
+        else begin  // not reset
+
+            case (free_huge_page_fsm)
+                s0 : begin
+                    if (return_huge_page_to_host) begin
+                        huge_page_free_1 <= 1'b1;
+                        free_huge_page_fsm <= s1;
+                    end
+                end
+                s1 : begin
+                    huge_page_free_1 <= 1'b0;
+                    free_huge_page_fsm <= s2;
+                end
+                s2 : begin
+                    if (return_huge_page_to_host) begin
+                        huge_page_free_2 <= 1'b1;
+                        free_huge_page_fsm <= s3;
+                    end
+                end
+                s3 : begin
+                    huge_page_free_2 <= 1'b0;
+                    free_huge_page_fsm <= s0;
+                end
+            endcase
+
+            case (give_huge_page_fsm)
+                s0 : begin
+                    if (huge_page_status_1) begin
+                        huge_page_available <= 1'b1;
+                        current_huge_page_addr <= huge_page_addr_1;
+                        give_huge_page_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    if (return_huge_page_to_host) begin
+                        huge_page_available <= 1'b0;
+                        give_huge_page_fsm <= s2;
+                    end
+                end
+
+                s2 : begin
+                    if (huge_page_status_2) begin
+                        huge_page_available <= 1'b1;
+                        current_huge_page_addr <= huge_page_addr_2;
+                        give_huge_page_fsm <= s3;
+                    end
+                end
+
+                s3 : begin
+                    if (return_huge_page_to_host) begin
+                        huge_page_available <= 1'b0;
+                        give_huge_page_fsm <= s0;
+                    end
+                end
+            endcase
+
+        end     // not reset
+    end  //always
+
+    ////////////////////////////////////////////////
+    // trigger_rd_tlp
+    ////////////////////////////////////////////////
+    always @( posedge trn_clk or negedge reset_n ) begin
+
+        if (!reset_n ) begin  // reset
+            return_huge_page_to_host <= 1'b0;
+            read_chunk <= 1'b0;
+            trigger_rd_tlp_fsm <= s0;
         end
         
         else begin  // not reset
-            case (fsm)
+
+            return_huge_page_to_host <= 1'b0;
+            diff <= wr_addr + (~commited_rd_address_reg1) + 1;
+
+            case (trigger_rd_tlp_fsm)
 
                 s0 : begin
-                    capture_huge_page_1 <= 1'b0;
-                    capture_huge_page_2 <= 1'b0;
-                    if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n) && (!trn_rbar_hit_n[2])) begin
-                        if (trn_rd[62:56] == `RX_MEM_RD64_FMT_TYPE) begin   // extend this to receive RX_MEM_WR64_FMT_TYPE
-                            fsm <= s1;
+                    huge_page_addr_read_from <= current_huge_page_addr;
+                    if ( (huge_page_available) && (diff >= 'h40) ) begin                 // there is room for 512 bytes
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    if (read_chunk_ack) begin
+                        read_chunk <= 1'b0;
+                        trigger_rd_tlp_fsm <= s2;
+                    end
+                    data_counter <= 'h020;              // this has to be replaced with the actual tlp payload
+                end
+
+                s2 : begin                              // wait for packets
+                    if (receiving_completion) begin
+                        data_counter <= data_counter + data_on_tlp;
+                        if (data_counter == 'h80) begin
+                            trigger_rd_tlp_fsm <= s3;
+                        end
+                    end
+                    look_ahead_huge_page_addr_read_from <= huge_page_addr_read_from + 'h200;
+                    look_ahead_qwords_counter <= qwords_counter + 'h40;
+                end
+
+                s3 : begin
+                    huge_page_addr_read_from <= look_ahead_huge_page_addr_read_from;
+                    qwords_counter <= look_ahead_qwords_counter;
+                    if (look_ahead_qwords_counter < huge_page_qwords_1) begin
+                        if (diff >= 'h40) begin
+                            read_chunk <= 1'b1;
+                            trigger_rd_tlp_fsm <= s1;
+                        end
+                        else begin
+                            trigger_rd_tlp_fsm <= s5;
+                        end
+                    end
+                    else begin
+                        return_huge_page_to_host <= 1'b1;
+                        trigger_rd_tlp_fsm <= s4;
+                    end
+                end
+
+                s4 : begin
+                    trigger_rd_tlp_fsm <= s0;          // dummy wait
+                end
+
+                s5 : begin                              // wait space in the internal buffer
+                    if (diff >= 'h40) begin                 // there is room for 512 bytes
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s1;
+                    end
+                end
+
+                default : begin
+                    trigger_rd_tlp_fsm <= s0;
+                end
+
+            endcase
+        end     // not reset
+    end  //always
+
+    ////////////////////////////////////////////////
+    // pulse generation for 156.25 MHz domain   must be active for 3 clks in 250 MHz domain
+    ////////////////////////////////////////////////
+    always @( posedge trn_clk or negedge reset_n ) begin
+        
+        if (!reset_n ) begin  // reset
+            wr_addr_updated <= 1'b0;
+            pulse_gen_fsm1 <= s0;
+        end
+        else begin  // not reset
+
+            case (pulse_gen_fsm1)
+                s0 : begin
+                    wr_addr_updated <= 1'b0;
+                    if (wr_addr_updated_internal) begin
+                        wr_addr_updated <= 1'b1;
+                        pulse_gen_fsm1 <= s1;
+                    end
+                end
+                s1 : pulse_gen_fsm1 <= s2;
+                s2 : pulse_gen_fsm1 <= s0;
+            endcase
+
+        end     // not reset
+    end  //always
+
+
+    ////////////////////////////////////////////////
+    // completion_tlp & write to bram (wr_to_bram_fsm)
+    ////////////////////////////////////////////////
+    always @( posedge trn_clk or negedge reset_n ) begindata_on_tlp
+
+        if (!reset_n ) begin  // reset
+            receiving_completion <= 1'b0;
+            wr_addr <= 'b0;
+            wr_to_bram_fsm <= s0;
+        end
+        
+        else begin  // not reset
+
+            receiving_completion <= 1'b0;
+            wr_addr_updated_internal <= 1'b0;
+            wr_en <= 1'b1;
+
+            case (wr_to_bram_fsm)
+
+                s0 : begin
+                    data_on_tlp <= trn_rd[41:32];
+                    if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n)) begin
+                        if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] == `SC) begin
+                            receiving_completion <= 1'b1;
+                            wr_to_bram_fsm <= s1;
                         end
                     end
                 end
 
                 s1 : begin
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
-                        case (trn_rd[37:34])
-
-                            4'b1010 : begin     // huge page address
-                                huge_page_addr_1[7:0] <= trn_rd[31:24];
-                                huge_page_addr_1[15:8] <= trn_rd[23:16];
-                                huge_page_addr_1[23:16] <= trn_rd[15:8];
-                                huge_page_addr_1[31:24] <= trn_rd[7:0];
-                                fsm <= s2;
-                            end
-
-                            4'b1100 : begin     // huge page address
-                                huge_page_addr_2[7:0] <= trn_rd[31:24];
-                                huge_page_addr_2[15:8] <= trn_rd[23:16];
-                                huge_page_addr_2[23:16] <= trn_rd[15:8];
-                                huge_page_addr_2[31:24] <= trn_rd[7:0];
-                                fsm <= s3;
-                            end
-
-                            4'b1011 : begin     // huge page un-lock
-                                capture_huge_page_1 <= 1'b1;
-                                fsm <= s0;
-                            end
-
-                            4'b1101 : begin     // huge page un-lock
-                                capture_huge_page_2 <= 1'b1;
-                                fsm <= s0;
-                            end
-
-                            default : begin //other addresses
-                                fsm <= s0;
-                            end
-
-                        endcase
+                        wr_to_bram_fsm <= s2;
                     end
-                end
 
                 s2 : begin
+                    wr_data <= trn_rd;
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
-                        huge_page_addr_1[39:32] <= trn_rd[63:56];
-                        huge_page_addr_1[47:40] <= trn_rd[55:48];
-                        huge_page_addr_1[55:48] <= trn_rd[47:40];
-                        huge_page_addr_1[63:56] <= trn_rd[39:32];
-                        fsm <= s0;
-                    end
-                end
-
-                s3 : begin
-                    if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
-                        huge_page_addr_2[39:32] <= trn_rd[63:56];
-                        huge_page_addr_2[47:40] <= trn_rd[55:48];
-                        huge_page_addr_2[55:48] <= trn_rd[47:40];
-                        huge_page_addr_2[63:56] <= trn_rd[39:32];
-                        fsm <= s0;
+                        wr_addr <= wr_addr +1;
+                        wr_addr_updated_internal <= 1'b1;
+                        if (trn_reof_n) begin
+                            wr_addr <= wr_addr;
+                            wr_to_bram_fsm <= s0;
+                        end
                     end
                 end
 
                 default : begin //other TLPs
-                    fsm <= s0;
+                    wr_to_bram_fsm <= s0;
                 end
 
             endcase

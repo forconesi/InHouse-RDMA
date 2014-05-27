@@ -5,7 +5,7 @@
 
 `define TX_MEM_WR64_FMT_TYPE 7'b11_00000
 
-module wr_rx_pkt_to_hugepages (
+module rx_wr_pkt_to_hugepages (
 
     input    trn_clk,
     input    trn_lnk_up_n,
@@ -44,7 +44,12 @@ module wr_rx_pkt_to_hugepages (
     output reg  [`BF+1:0]  commited_rd_address,
     input       [4:0]      qwords_to_send,        // 156.25 MHz domain driven
     output reg             rd_addr_change,        
-    output reg  [`BF+1:0]  commited_rd_address_to_mac
+    output reg  [`BF+1:0]  commited_rd_address_to_mac,
+
+    // Arbitrations hanshake
+
+    input                  my_turn,
+    output reg             driving_interface
 
     );
 
@@ -322,6 +327,8 @@ module wr_rx_pkt_to_hugepages (
             remember_to_change_huge_page <= 1'b0;
            
             return_huge_page_to_host <= 1'b0;
+
+            driving_interface <= 1'b0;
             state <= s0;
         end
         
@@ -344,16 +351,20 @@ module wr_rx_pkt_to_hugepages (
                 end
 
                 s1 : begin
-                    if ( (trn_tbuf_av[1]) && (!trn_tdst_rdy_n) ) begin          // credits available and endpointready
+                    driving_interface <= 1'b0;                                              // we're taking the risk of starving the tx process
+                    if ( (trn_tbuf_av[1]) && (!trn_tdst_rdy_n) && (my_turn)) begin          // credits available and endpointready and myturn
                         if (change_huge_page_reg1 || remember_to_change_huge_page) begin                         // previous module wants to change huge page
                             remember_to_change_huge_page <= 1'b0;
+                            driving_interface <= 1'b1;
                             state <= s8;
                         end
                         else if (send_last_tlp_change_huge_page_reg1) begin
                             remember_to_change_huge_page <= 1'b1;
+                            driving_interface <= 1'b1;
                             state <= s2;
                         end
                         else if ( trigger_tlp_reg1 ) begin
+                            driving_interface <= 1'b1;
                             state <= s2;
                         end
                     end
@@ -542,7 +553,7 @@ module wr_rx_pkt_to_hugepages (
     end  //always
    
 
-endmodule // wr_rx_pkt_to_hugepages
+endmodule // rx_wr_pkt_to_hugepages
 
 //[1] the experiment shows that we cannot go too fast to send tlps again
 /*
