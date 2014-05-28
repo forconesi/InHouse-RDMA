@@ -83,7 +83,6 @@ static void unmap_and_free_lbuf(struct nf10_adapter *adapter,
 static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
 			      struct desc *desc, int rx)
 {
-retry:
 #ifdef CONFIG_LBUF_COHERENT
 	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
 					       &desc->dma_addr);
@@ -102,14 +101,6 @@ retry:
 		return -EIO;
 	}
 #endif
-
-	/* FIXME: due to the current HW constraint, dma bus address should
-	 * not be within 32bit address space. So, this fixup will be removed */
-	if ((desc->dma_addr >> 32) == 0) {
-		unmap_and_free_lbuf(adapter, desc, rx);
-		goto retry;
-	}
-
 	return 0;
 }
 
