@@ -221,6 +221,32 @@ module my_top (
     wire   [`BF+1:0]                                  rd_addr_extended;
     wire                                              rd_addr_change;
 
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Transmition side of the NIC signal declaration
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //-------------------------------------------------------
+    // Local Wires internal_true_dual_port_ram tx
+    //-------------------------------------------------------
+    (* KEEP = "TRUE" *)wire   [`BF:0]                                    tx_wr_addr;
+    (* KEEP = "TRUE" *)wire   [63:0]                                     tx_wr_data;
+    (* KEEP = "TRUE" *)wire   [`BF:0]                                    tx_rd_addr;
+    (* KEEP = "TRUE" *)wire   [63:0]                                     tx_rd_data;
+    (* KEEP = "TRUE" *)wire                                              tx_wr_clk;
+    (* KEEP = "TRUE" *)wire                                              tx_wr_en;
+    (* KEEP = "TRUE" *)wire                                              tx_rd_clk;
+    (* KEEP = "TRUE" *)wire   [63:0]                                     tx_qspo;
+
+    //-------------------------------------------------------
+    // Local Wires tx_mac_interface tx
+    //-------------------------------------------------------
+    (* KEEP = "TRUE" *)wire   [`BF:0]                                    tx_commited_rd_address;
+    (* KEEP = "TRUE" *)wire                                              tx_commited_rd_address_change;
+    (* KEEP = "TRUE" *)wire                                              tx_wr_addr_updated;
+
+    //debug
+    assign tx_commited_rd_address = 'b0;
+    assign tx_commited_rd_address_change = 1'b1;
+    
     ////////////////////////////////////////////////
     // INSTRUMENTATION
     ////////////////////////////////////////////////
@@ -524,10 +550,24 @@ module my_top (
         .host_miim_rdy(mac_host_miim_rdy),                  // I 
         
         //-------------------------------------------------------
-        // To internal_true_dual_port_ram
+        // To internal_true_dual_port_ram RX
         //-------------------------------------------------------
         .rd_addr(rd_addr),                       // O [`BF:0]
         .rd_data(rd_data),                       // I [63:0]
+
+        //-------------------------------------------------------
+        // To internal_true_dual_port_ram TX
+        //-------------------------------------------------------
+        .tx_wr_addr(tx_wr_addr),                            // O [`BF:0]
+        .tx_wr_data(tx_wr_data),                            // O [63:0]
+        .tx_wr_en(tx_wr_en),                                // O
+
+        //-------------------------------------------------------
+        // To tx_mac_interface
+        //-------------------------------------------------------
+        .tx_commited_rd_address(tx_commited_rd_address),    // I [`BF:0]
+        .tx_commited_rd_address_change(tx_commited_rd_address_change),    // I 
+        .tx_wr_addr_updated(tx_wr_addr_updated),            // O 
 
         // Rx Local-Link
 

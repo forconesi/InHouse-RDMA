@@ -1,7 +1,7 @@
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
-`timescale 1ns/1ns
+`include "includes.v"
 
 `define CPL_MEM_RD64_FMT_TYPE 7'b10_01010
 `define SC 3'b000
@@ -86,9 +86,9 @@ module tx_wr_pkt_to_bram (
     reg             return_huge_page_to_host;
     reg     [14:0]  trigger_rd_tlp_fsm;
     reg     [`BF:0] diff;
-    reg     [9:0]   data_counter;                                   // the width can be less
-    reg     [9:0]   qwords_counter;                                   // the width can be less
-    reg     [9:0]   look_ahead_qwords_counter;
+    reg     [8:0]   qwords_counter_rd_request;                                   // the width can be less
+    reg     [8:0]   huge_page_qwords_counter;                                   // the width can be less
+    reg     [8:0]   look_ahead_huge_page_qwords_counter;
     reg     [63:0]  look_ahead_huge_page_addr_read_from;
 
     //-------------------------------------------------------
@@ -102,7 +102,7 @@ module tx_wr_pkt_to_bram (
     reg     [14:0]  wr_to_bram_fsm;
     reg             receiving_completion;
     reg             wr_addr_updated_internal;
-    reg     [9:0]   data_on_tlp;
+    reg     [8:0]   qwords_on_tlp;
     
     assign reset_n = ~trn_lnk_up_n;
 
@@ -213,6 +213,7 @@ module tx_wr_pkt_to_bram (
         if (!reset_n ) begin  // reset
             return_huge_page_to_host <= 1'b0;
             read_chunk <= 1'b0;
+            diff <= 'b0;
             trigger_rd_tlp_fsm <= s0;
         end
         
@@ -225,6 +226,7 @@ module tx_wr_pkt_to_bram (
 
                 s0 : begin
                     huge_page_addr_read_from <= current_huge_page_addr;
+                    huge_page_qwords_counter <= 'b0;
                     if ( (huge_page_available) && (diff >= 'h40) ) begin                 // there is room for 512 bytes
                         read_chunk <= 1'b1;
                         trigger_rd_tlp_fsm <= s1;
@@ -236,24 +238,24 @@ module tx_wr_pkt_to_bram (
                         read_chunk <= 1'b0;
                         trigger_rd_tlp_fsm <= s2;
                     end
-                    data_counter <= 'h020;              // this has to be replaced with the actual tlp payload
+                    qwords_counter_rd_request <= 'h010;              // this has to be replaced with the actual tlp payload
                 end
 
                 s2 : begin                              // wait for packets
                     if (receiving_completion) begin
-                        data_counter <= data_counter + data_on_tlp;
-                        if (data_counter == 'h80) begin
+                        qwords_counter_rd_request <= qwords_counter_rd_request + qwords_on_tlp;
+                        if (qwords_counter_rd_request == 'h40) begin
                             trigger_rd_tlp_fsm <= s3;
                         end
                     end
                     look_ahead_huge_page_addr_read_from <= huge_page_addr_read_from + 'h200;
-                    look_ahead_qwords_counter <= qwords_counter + 'h40;
+                    look_ahead_huge_page_qwords_counter <= huge_page_qwords_counter + 'h40;
                 end
 
                 s3 : begin
                     huge_page_addr_read_from <= look_ahead_huge_page_addr_read_from;
-                    qwords_counter <= look_ahead_qwords_counter;
-                    if (look_ahead_qwords_counter < huge_page_qwords_1) begin
+                    huge_page_qwords_counter <= look_ahead_huge_page_qwords_counter;
+                    if (look_ahead_huge_page_qwords_counter < huge_page_qwords_1) begin
                         if (diff >= 'h40) begin
                             read_chunk <= 1'b1;
                             trigger_rd_tlp_fsm <= s1;
@@ -317,11 +319,12 @@ module tx_wr_pkt_to_bram (
     ////////////////////////////////////////////////
     // completion_tlp & write to bram (wr_to_bram_fsm)
     ////////////////////////////////////////////////
-    always @( posedge trn_clk or negedge reset_n ) begindata_on_tlp
+    always @( posedge trn_clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
             receiving_completion <= 1'b0;
             wr_addr <= 'b0;
+            wr_en <= 1'b1;
             wr_to_bram_fsm <= s0;
         end
         
@@ -334,9 +337,9 @@ module tx_wr_pkt_to_bram (
             case (wr_to_bram_fsm)
 
                 s0 : begin
-                    data_on_tlp <= trn_rd[41:32];
+                    qwords_on_tlp <= trn_rd[41:33];
                     if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n)) begin
-                        if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] == `SC) begin
+                        if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] == `SC) ) begin
                             receiving_completion <= 1'b1;
                             wr_to_bram_fsm <= s1;
                         end
@@ -347,6 +350,7 @@ module tx_wr_pkt_to_bram (
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
                         wr_to_bram_fsm <= s2;
                     end
+                end
 
                 s2 : begin
                     wr_data <= trn_rd;
@@ -355,6 +359,7 @@ module tx_wr_pkt_to_bram (
                         wr_addr_updated_internal <= 1'b1;
                         if (trn_reof_n) begin
                             wr_addr <= wr_addr;
+                            wr_addr_updated_internal <= 1'b0;
                             wr_to_bram_fsm <= s0;
                         end
                     end

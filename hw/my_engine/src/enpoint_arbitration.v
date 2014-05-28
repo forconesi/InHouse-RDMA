@@ -29,6 +29,7 @@ module enpoint_arbitration (
     // Local send_tlps_machine
     //-------------------------------------------------------   
     reg     [7:0]   fsm;
+    reg             turn_bit;
 
     assign reset_n = ~trn_lnk_up_n;
 
