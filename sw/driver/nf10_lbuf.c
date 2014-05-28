@@ -112,50 +112,6 @@ retry:
 	return 0;
 }
 
-static int __nf10_lbuf_init_buffers(struct nf10_adapter *adapter, int rx)
-{
-	struct large_buffer *lbuf = get_lbuf();
-	int i;
-	int err = 0;
-
-	for (i = 0; i < NR_LBUF; i++) {
-		struct desc *desc = &lbuf->descs[rx][i];
-		if ((err = alloc_and_map_lbuf(adapter, desc, rx)))
-			break;
-		netif_info(adapter, probe, adapter->netdev,
-			   "%s lbuf[%d] allocated at kern_addr=%p/dma_addr=%p"
-			   " pfn=%lx (size=%lu bytes)\n", rx ? "RX" : "TX", i,
-			   desc->kern_addr, (void *)desc->dma_addr, 
-			   page_to_pfn(desc->page), LBUF_SIZE);
-	}
-	
-
-	if (unlikely(err))	/* failed to allocate all lbufs */
-		for (i--; i >= 0; i--)
-			unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
-	else {
-		if (rx)
-			lbuf->rx_cons = 0;
-		else
-			lbuf->tx_cons = 0;
-	}
-
-	return err;
-}
-
-static void __nf10_lbuf_free_buffers(struct nf10_adapter *adapter, int rx)
-{
-	struct large_buffer *lbuf = get_lbuf();
-	int i;
-
-	for (i = 0; i < NR_LBUF; i++) {
-		unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
-		netif_info(adapter, drv, adapter->netdev,
-			   "%s lbuf[%d] is freed from kern_addr=%p",
-			   rx ? "RX" : "TX", i, lbuf->descs[rx][i].kern_addr);
-	}
-}
-
 static void inc_rx_cons(struct nf10_adapter *adapter)
 {
 	struct large_buffer *lbuf = get_lbuf();
@@ -187,6 +143,60 @@ static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx
 			   idx, lbuf->rx_cons);
 
 	inc_rx_cons(adapter);
+}
+
+static void nf10_lbuf_prepare_rx_all(struct nf10_adapter *adapter)
+{
+	unsigned long i;
+
+	for (i = 0; i < NR_LBUF; i++)
+		nf10_lbuf_prepare_rx(adapter, i);
+}
+
+static int __nf10_lbuf_init_buffers(struct nf10_adapter *adapter, int rx)
+{
+	struct large_buffer *lbuf = get_lbuf();
+	int i;
+	int err = 0;
+
+	for (i = 0; i < NR_LBUF; i++) {
+		struct desc *desc = &lbuf->descs[rx][i];
+		if ((err = alloc_and_map_lbuf(adapter, desc, rx)))
+			break;
+		netif_info(adapter, probe, adapter->netdev,
+			   "%s lbuf[%d] allocated at kern_addr=%p/dma_addr=%p"
+			   " pfn=%lx (size=%lu bytes)\n", rx ? "RX" : "TX", i,
+			   desc->kern_addr, (void *)desc->dma_addr, 
+			   page_to_pfn(desc->page), LBUF_SIZE);
+	}
+	
+
+	if (unlikely(err))	/* failed to allocate all lbufs */
+		for (i--; i >= 0; i--)
+			unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
+	else {
+		if (rx) {
+			lbuf->rx_cons = 0;
+			nf10_lbuf_prepare_rx_all(adapter);
+		}
+		else
+			lbuf->tx_cons = 0;
+	}
+
+	return err;
+}
+
+static void __nf10_lbuf_free_buffers(struct nf10_adapter *adapter, int rx)
+{
+	struct large_buffer *lbuf = get_lbuf();
+	int i;
+
+	for (i = 0; i < NR_LBUF; i++) {
+		unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
+		netif_info(adapter, drv, adapter->netdev,
+			   "%s lbuf[%d] is freed from kern_addr=%p",
+			   rx ? "RX" : "TX", i, lbuf->descs[rx][i].kern_addr);
+	}
 }
 
 #ifdef CONFIG_SKBPOOL
@@ -406,14 +416,6 @@ static int nf10_lbuf_napi_budget(void)
 	return 2;
 }
 
-static void nf10_lbuf_prepare_rx_all(struct nf10_adapter *adapter)
-{
-	unsigned long i;
-
-	for (i = 0; i < NR_LBUF; i++)
-		nf10_lbuf_prepare_rx(adapter, i);
-}
-
 static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter, 
 				     int *work_done, int budget)
 {
@@ -467,7 +469,6 @@ static struct nf10_hw_ops lbuf_hw_ops = {
 	.init_buffers		= nf10_lbuf_init_buffers,
 	.free_buffers		= nf10_lbuf_free_buffers,
 	.get_napi_budget	= nf10_lbuf_napi_budget,
-	.prepare_rx_buffers	= nf10_lbuf_prepare_rx_all,
 	.process_rx_irq		= nf10_lbuf_process_rx_irq,
 	.start_xmit		= nf10_lbuf_start_xmit,
 	.clean_tx_irq		= nf10_lbuf_clean_tx_irq
