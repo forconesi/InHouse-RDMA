@@ -7,9 +7,10 @@
 #define NF10_IOCTL_CMD_WAIT_INTR	(SIOCDEVPRIVATE+2)
 
 #ifdef __KERNEL__
-#include <linux/pci.h>
+#include "nf10.h"
 extern int nf10_init_fops(struct nf10_adapter *adapter);
 extern int nf10_remove_fops(struct nf10_adapter *adapter);
+extern bool nf10_user_rx_callback(struct nf10_adapter *adapter);
 #endif
 
 #endif

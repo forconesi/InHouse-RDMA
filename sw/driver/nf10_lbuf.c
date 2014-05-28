@@ -1,6 +1,7 @@
 #include <linux/etherdevice.h>
 #include "nf10.h"
 #include "nf10_lbuf.h"
+#include "nf10_fops.h"
 
 #ifdef CONFIG_SKBPOOL
 #include "skbpool.h"
@@ -432,16 +433,9 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	pci_dma_sync_single_for_cpu(adapter->pdev, dma_addr,
 				    LBUF_SIZE, PCI_DMA_FROMDEVICE);
 #endif
-	/* if direct user access mode is enabled, just wake up
-	 * a waiting user thread */
-	if (adapter->nr_user_mmap > 0) { 
-		if (likely(waitqueue_active(&adapter->wq_user_intr)))
-			wake_up(&adapter->wq_user_intr);
-		/* in case a user thread has mapped rx buffers, but
-		 * not waiting for an interrupt, just skip it while granting
-		 * an opportunity for the thread to poll buffers later */
+	/* if a user process can handle it, pass it up and return */
+	if (nf10_user_rx_callback(adapter))
 		return;
-	}
 
 	/* currently, just process one large buffer, regardless of budget */
 	nf10_lbuf_deliver_skbs(adapter, kern_addr);
