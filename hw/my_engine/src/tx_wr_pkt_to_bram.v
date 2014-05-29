@@ -86,7 +86,8 @@ module tx_wr_pkt_to_bram (
     reg             return_huge_page_to_host;
     reg     [14:0]  trigger_rd_tlp_fsm;
     reg     [`BF:0] diff;
-    reg     [8:0]   qwords_counter_rd_request;                                   // the width can be less
+    reg     [8:0]   next_wr_addr;
+    reg     [8:0]   look_ahead_next_wr_addr;
     reg     [8:0]   huge_page_qwords_counter;                                   // the width can be less
     reg     [8:0]   look_ahead_huge_page_qwords_counter;
     reg     [63:0]  look_ahead_huge_page_addr_read_from;
@@ -215,55 +216,48 @@ module tx_wr_pkt_to_bram (
             return_huge_page_to_host <= 1'b0;
             read_chunk <= 1'b0;
             diff <= 'b0;
+            next_wr_addr <= 'b0;
             trigger_rd_tlp_fsm <= s0;
         end
         
         else begin  // not reset
 
             return_huge_page_to_host <= 1'b0;
-            diff <= wr_addr + (~commited_rd_address_reg1) + 1;
+            diff <= next_wr_addr + (~commited_rd_address_reg1) + 1;
 
             case (trigger_rd_tlp_fsm)
 
                 s0 : begin
                     huge_page_addr_read_from <= current_huge_page_addr;
                     huge_page_qwords_counter <= 'b0;
-                    if ( (huge_page_available) && (diff < 'h1C0) ) begin                 // there is room for 512 bytes
-                        read_chunk <= 1'b1;
+                    if (huge_page_available) begin
                         trigger_rd_tlp_fsm <= s1;
                     end
                 end
 
                 s1 : begin
-                    if (read_chunk_ack) begin
-                        read_chunk <= 1'b0;
-                        trigger_rd_tlp_fsm <= s2;
-                    end
-                    qwords_counter_rd_request <= 'h010;              // this has to be replaced with the actual tlp payload
-                end
-
-                s2 : begin                              // wait for packets
-                    if (receiving_completion) begin
-                        qwords_counter_rd_request <= qwords_counter_rd_request + qwords_on_tlp;
-                        if (qwords_counter_rd_request == 'h40) begin
-                            trigger_rd_tlp_fsm <= s3;
-                        end
-                    end
+                    look_ahead_next_wr_addr <= next_wr_addr + 'h40;
                     look_ahead_huge_page_addr_read_from <= huge_page_addr_read_from + 'h200;
                     look_ahead_huge_page_qwords_counter <= huge_page_qwords_counter + 'h40;
+                    if (diff < 'h1C0) begin
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s2;
+                    end
+                end
+
+                s2 : begin
+                    next_wr_addr <= look_ahead_next_wr_addr;
+                    huge_page_addr_read_from <= look_ahead_huge_page_addr_read_from;
+                    huge_page_qwords_counter <= look_ahead_huge_page_qwords_counter;
+                    if (read_chunk_ack) begin
+                        read_chunk <= 1'b0;
+                        trigger_rd_tlp_fsm <= s3;
+                    end
                 end
 
                 s3 : begin
-                    huge_page_addr_read_from <= look_ahead_huge_page_addr_read_from;
-                    huge_page_qwords_counter <= look_ahead_huge_page_qwords_counter;
-                    if (look_ahead_huge_page_qwords_counter < huge_page_qwords_1) begin
-                        if (diff < 'h1C0) begin
-                            read_chunk <= 1'b1;
-                            trigger_rd_tlp_fsm <= s1;
-                        end
-                        else begin
-                            trigger_rd_tlp_fsm <= s5;
-                        end
+                    if (huge_page_qwords_counter < huge_page_qwords_1) begin
+                        trigger_rd_tlp_fsm <= s1;
                     end
                     else begin
                         return_huge_page_to_host <= 1'b1;
@@ -273,13 +267,6 @@ module tx_wr_pkt_to_bram (
 
                 s4 : begin
                     trigger_rd_tlp_fsm <= s0;          // dummy wait
-                end
-
-                s5 : begin                              // wait space in the internal buffer
-                    if (diff < 'h1C0) begin                 // there is room for 512 bytes
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s1;
-                    end
                 end
 
                 default : begin
