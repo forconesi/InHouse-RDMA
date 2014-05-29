@@ -227,8 +227,8 @@ module my_top (
     //-------------------------------------------------------
     // Local Wires internal_true_dual_port_ram tx
     //-------------------------------------------------------
-    (* KEEP = "TRUE" *)wire   [`BF:0]                                    tx_wr_addr;
-    (* KEEP = "TRUE" *)wire   [63:0]                                     tx_wr_data;
+    wire   [`BF:0]                                    tx_wr_addr;
+    wire   [63:0]                                     tx_wr_data;
     (* KEEP = "TRUE" *)wire   [`BF:0]                                    tx_rd_addr;
     (* KEEP = "TRUE" *)wire   [63:0]                                     tx_rd_data;
     (* KEEP = "TRUE" *)wire                                              tx_wr_clk;
@@ -243,10 +243,6 @@ module my_top (
     (* KEEP = "TRUE" *)wire                                              tx_commited_rd_address_change;
     (* KEEP = "TRUE" *)wire                                              tx_wr_addr_updated;
 
-    //debug
-    assign tx_commited_rd_address = 'b0;
-    assign tx_commited_rd_address_change = 1'b1;
-    
     ////////////////////////////////////////////////
     // INSTRUMENTATION
     ////////////////////////////////////////////////
@@ -400,9 +396,9 @@ module my_top (
     // MAC Configuration
     // Tx interface disabled
     assign mac_tx_underrun = 1'b0;
-    assign mac_tx_data = 64'b0;
-    assign mac_tx_data_valid = 8'b0;
-    assign mac_tx_start = 1'b0;
+    //assign mac_tx_data = 64'b0;
+    //assign mac_tx_data_valid = 8'b0;
+    //assign mac_tx_start = 1'b0;
     assign mac_tx_ifg_delay = 8'b0;
 
     assign mac_pause_val = 16'b0;
@@ -493,6 +489,48 @@ module my_top (
         .rd_addr_change(rd_addr_change),        // I
         .rd_addr_extended(rd_addr_extended)    // I [`BF+1:0]
         );
+
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Transmition side of the NIC (START)
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //-------------------------------------------------------
+    // internal_true_dual_port_ram tx
+    //-------------------------------------------------------
+    tx_buffer my_tx_buffer (
+        .a(tx_wr_addr),                // I [`BF:0]
+        .d(tx_wr_data),                // I [63:0]
+        .dpra(tx_rd_addr),             // I [`BF:0]
+        .clk(tx_wr_clk),               // I 
+        .we(tx_wr_en),                 // I
+        .qdpo_clk(tx_rd_clk),          // I
+        .qspo(tx_qspo),                // O [63:0]
+        .qdpo(tx_rd_data)              // O [63:0]
+        );  //see pg063
+
+    assign tx_rd_clk = xaui_clk_156_25_out;  //156.25 MHz
+    assign tx_wr_clk = trn_clk_c;            // 250 MHz
+
+    //-------------------------------------------------------
+    // tx_mac_interface
+    //-------------------------------------------------------
+    tx_mac_interface tx_mac_interface_mod (
+        .clk(xaui_clk_156_25_out),                       // I
+        .reset_n(reset_n),                     // I
+        .tx_data(mac_tx_data),                 // O [63:0]
+        .tx_data_valid(mac_tx_data_valid),     // O [7:0]
+        .tx_start(mac_tx_start),               // O
+        .tx_ack(mac_tx_ack),                   // I
+        .rd_addr(tx_rd_addr),                  // O [`BF:0]
+        .rd_data(tx_rd_data),                  // I [63:0]
+        .commited_rd_address(tx_commited_rd_address),  // O [`BF:0]
+        .commited_rd_address_change(tx_commited_rd_address_change),  // O
+        .wr_addr(tx_wr_addr),                   // I [`BF:0]
+        .wr_addr_updated(tx_wr_addr_updated)  // I
+        );
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Transmition side of the NIC (END)
+    //////////////////////////////////////////////////////////////////////////////////////////
+
 
     //-------------------------------------------------------
     // Endpoint Implementation Application
