@@ -355,7 +355,7 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s2 : begin
-                    wr_data <= {aux, trn_rd[63:32]};
+                    wr_data <= {trn_rd[39:32], trn_rd[47:40], trn_rd[55:48], trn_rd[63:56], aux[7:0], aux[15:8], aux[23:16], aux[31:24]};
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
                         aux <= trn_rd[31:0];
                         wr_addr <= wr_addr +1;
