@@ -240,8 +240,8 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     ret = request_irq(pdev->irq, mdio_access_interrupt_handler, 0, DRV_NAME, pdev);             // with MSI in linux we cannot allocate more than one vector. use the interrupt line with this function during intialization
     if (ret) {printk(KERN_ERR "Myd: request_irq\n"); goto err_08;}
     
-    ret = configure_ael2005_phy_chips(my_drv_data);
-    if (ret) {printk(KERN_ERR "Myd: warning, AEL2005 not configured\n");}
+    //ret = configure_ael2005_phy_chips(my_drv_data);
+    //if (ret) {printk(KERN_ERR "Myd: warning, AEL2005 not configured\n");}
  
     free_irq(pdev->irq, pdev);
     // AEL2005 MDIO configuration ready
@@ -297,35 +297,31 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 
     //first dw reserved
     huge_page_address[0] = 0;
-    //second dw reserved
-    huge_page_address[1] = 0;
     //length
-    huge_page_address[2] = 0x46;
+    huge_page_address[1] = 0x46;
     //payload
-    huge_page_address[3] = 0xe04a1e00;
-    huge_page_address[4] = 0x78100052;
-    huge_page_address[5] = 0xfb2bebd2;
-    huge_page_address[6] = 0x00450008;
-    huge_page_address[7] = 0xd2653400;
-    huge_page_address[8] = 0x06400040;
-    huge_page_address[9] = 0xf4963c33;
-    huge_page_address[10] = 0x389d7439;
-    huge_page_address[11] = 0xeb9b1534;
-    huge_page_address[12] = 0xdf64bb01;
-    huge_page_address[13] = 0x89b10321;
-    huge_page_address[14] = 0x1080b71a;
-    huge_page_address[15] = 0x0fc9f501;
-    huge_page_address[16] = 0x01010000;
-    huge_page_address[17] = 0xfa020a08;
-    huge_page_address[18] = 0xcc303b43;
-    huge_page_address[19] = 0xffff37a3;
-    //last dw reserved
-    huge_page_address[20] = 0;
+    huge_page_address[2] = 0xe04a1e00;
+    huge_page_address[3] = 0x78100052;
+    huge_page_address[4] = 0xfb2bebd2;
+    huge_page_address[5] = 0x00450008;
+    huge_page_address[6] = 0xd2653400;
+    huge_page_address[7] = 0x06400040;
+    huge_page_address[8] = 0xf4963c33;
+    huge_page_address[9] = 0x389d7439;
+    huge_page_address[10] = 0xeb9b1534;
+    huge_page_address[11] = 0xdf64bb01;
+    huge_page_address[12] = 0x89b10321;
+    huge_page_address[13] = 0x1080b71a;
+    huge_page_address[14] = 0x0fc9f501;
+    huge_page_address[15] = 0x01010000;
+    huge_page_address[16] = 0xfa020a08;
+    huge_page_address[17] = 0xcc303b43;
+    huge_page_address[18] = 0xffff37a3;
 
     // send the address of the "full" huge page to the board
-    *(((u32 *)my_drv_data->bar2) + 10) = my_drv_data->huge_page1_dma_addr;
+    *(((u64 *)my_drv_data->bar2) + 5) = my_drv_data->huge_page1_dma_addr;
     // send to the board the number of qwords written to the huge page
-    *(((u32 *)my_drv_data->bar2) + 11) = 10;        // 20
+    *(((u32 *)my_drv_data->bar2) + 11) = 9;        // 18
 
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: my_pcie_probe finished\n");

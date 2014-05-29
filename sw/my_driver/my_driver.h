@@ -45,6 +45,8 @@ struct my_driver_host_data {
 
     void *bar2;
     void *bar0;
+
+    atomic_t mdio_access_rdy;
 };
 
 int configure_ael2005_phy_chips(struct my_driver_host_data *my_drv_data);

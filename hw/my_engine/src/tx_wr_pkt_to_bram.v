@@ -103,6 +103,7 @@ module tx_wr_pkt_to_bram (
     reg             receiving_completion;
     reg             wr_addr_updated_internal;
     reg     [8:0]   qwords_on_tlp;
+    reg     [31:0]  aux;
     
     assign reset_n = ~trn_lnk_up_n;
 
@@ -227,7 +228,7 @@ module tx_wr_pkt_to_bram (
                 s0 : begin
                     huge_page_addr_read_from <= current_huge_page_addr;
                     huge_page_qwords_counter <= 'b0;
-                    if ( (huge_page_available) && (diff >= 'h40) ) begin                 // there is room for 512 bytes
+                    if ( (huge_page_available) && (diff < 'h1C0) ) begin                 // there is room for 512 bytes
                         read_chunk <= 1'b1;
                         trigger_rd_tlp_fsm <= s1;
                     end
@@ -256,7 +257,7 @@ module tx_wr_pkt_to_bram (
                     huge_page_addr_read_from <= look_ahead_huge_page_addr_read_from;
                     huge_page_qwords_counter <= look_ahead_huge_page_qwords_counter;
                     if (look_ahead_huge_page_qwords_counter < huge_page_qwords_1) begin
-                        if (diff >= 'h40) begin
+                        if (diff < 'h1C0) begin
                             read_chunk <= 1'b1;
                             trigger_rd_tlp_fsm <= s1;
                         end
@@ -275,7 +276,7 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s5 : begin                              // wait space in the internal buffer
-                    if (diff >= 'h40) begin                 // there is room for 512 bytes
+                    if (diff < 'h1C0) begin                 // there is room for 512 bytes
                         read_chunk <= 1'b1;
                         trigger_rd_tlp_fsm <= s1;
                     end
@@ -348,18 +349,18 @@ module tx_wr_pkt_to_bram (
 
                 s1 : begin
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
+                        aux <= trn_rd[31:0];
                         wr_to_bram_fsm <= s2;
                     end
                 end
 
                 s2 : begin
-                    wr_data <= trn_rd;
+                    wr_data <= {aux, trn_rd[63:32]};
+                    aux <= trn_rd[31:0];
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
                         wr_addr <= wr_addr +1;
                         wr_addr_updated_internal <= 1'b1;
                         if (trn_reof_n) begin
-                            wr_addr <= wr_addr;
-                            wr_addr_updated_internal <= 1'b0;
                             wr_to_bram_fsm <= s0;
                         end
                     end
