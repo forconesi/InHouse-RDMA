@@ -356,11 +356,11 @@ module tx_wr_pkt_to_bram (
 
                 s2 : begin
                     wr_data <= {aux, trn_rd[63:32]};
-                    aux <= trn_rd[31:0];
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
+                        aux <= trn_rd[31:0];
                         wr_addr <= wr_addr +1;
                         wr_addr_updated_internal <= 1'b1;
-                        if (trn_reof_n) begin
+                        if (!trn_reof_n) begin
                             wr_to_bram_fsm <= s0;
                         end
                     end
