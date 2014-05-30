@@ -105,6 +105,7 @@ module tx_wr_pkt_to_bram (
     reg             wr_addr_updated_internal;
     reg     [8:0]   qwords_on_tlp;
     reg     [31:0]  aux;
+    reg     [`BF:0] look_ahead_wr_addr;
     
     assign reset_n = ~trn_lnk_up_n;
 
@@ -312,8 +313,10 @@ module tx_wr_pkt_to_bram (
         if (!reset_n ) begin  // reset
             receiving_completion <= 1'b0;
             wr_addr <= 'b0;
+            commited_wr_addr <= 'b0;
             wr_en <= 1'b1;
             wr_to_bram_fsm <= s0;
+            look_ahead_wr_addr <= 'b0;
         end
         
         else begin  // not reset
@@ -326,6 +329,7 @@ module tx_wr_pkt_to_bram (
 
                 s0 : begin
                     qwords_on_tlp <= trn_rd[41:33];
+                    wr_addr_updated_internal <= 1'b1;
                     if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n)) begin
                         if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] == `SC) ) begin
                             receiving_completion <= 1'b1;
@@ -344,10 +348,11 @@ module tx_wr_pkt_to_bram (
                 s2 : begin
                     wr_data <= {trn_rd[39:32], trn_rd[47:40], trn_rd[55:48], trn_rd[63:56], aux[7:0], aux[15:8], aux[23:16], aux[31:24]};
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
+                        look_ahead_wr_addr <= look_ahead_wr_addr +1;
+                        wr_addr <= look_ahead_wr_addr;
                         aux <= trn_rd[31:0];
-                        wr_addr <= wr_addr +1;
-                        wr_addr_updated_internal <= 1'b1;
                         if (!trn_reof_n) begin
+                            commited_wr_addr <= look_ahead_wr_addr;
                             wr_to_bram_fsm <= s0;
                         end
                     end

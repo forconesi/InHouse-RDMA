@@ -503,8 +503,8 @@ module my_top (
         .clk(tx_wr_clk),               // I 
         .we(tx_wr_en),                 // I
         .qdpo_clk(tx_rd_clk),          // I
-        .qspo(tx_qspo),                // O [63:0]
-        .qdpo(tx_rd_data)              // O [63:0]
+        .spo(tx_qspo),                // O [63:0]
+        .dpo(tx_rd_data)              // O [63:0]
         );  //see pg063
 
     assign tx_rd_clk = xaui_clk_156_25_out;  //156.25 MHz

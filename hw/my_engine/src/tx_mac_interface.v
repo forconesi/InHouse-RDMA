@@ -19,8 +19,8 @@ module tx_mac_interface (
     
     
     // Internal logic
-    output reg                commited_rd_address,
-    output                    commited_rd_address_change,
+    output reg    [`BF:0]     commited_rd_address,
+    output reg                commited_rd_address_change,
     input         [`BF:0]     wr_addr,                         //250 MHz domain driven
     input                     wr_addr_updated                         //250 MHz domain driven
 
@@ -31,22 +31,26 @@ module tx_mac_interface (
     localparam s1 = 8'b00000001;
     localparam s2 = 8'b00000010;
     localparam s3 = 8'b00000100;
+    localparam s4 = 8'b00001000;
+    localparam s5 = 8'b00010000;
 
     //-------------------------------------------------------
     // Local ethernet frame reception and memory write
     //-------------------------------------------------------
-    reg     [7:0]     state;
+    reg     [7:0]     trigger_frame_fsm;
+    reg     [7:0]     tx_frame_fsm;
     reg     [31:0]    byte_counter;
-    reg     [`BF+1:0] aux_wr_addr;
-    reg     [`BF+1:0] start_wr_addr_next_pkt;
-    reg     [`BF+1:0] wr_addr_extended;
-    reg     [`BF+1:0] diff;
-    (* KEEP = "TRUE" *)reg     [31:0]   dropped_frames_counter;
+    reg     [9:0]     qwords_in_eth;
+    reg     [9:0]     qwords_sent;
+    reg     [`BF:0]   diff;
+    reg               advance_pointer;
+    reg               synch;
+    reg               trigger_tx_frame;
+    reg     [7:0]     last_tx_data_valid;
+    reg     [`BF:0]   wr_addr_new_start;
+    reg     [`BF:0]   next_rd_addr;
+    reg     [63:0]    rd_data_aux;
     
-    reg     [7:0]    rx_data_valid_reg;
-    reg              rx_good_frame_reg;
-    reg              rx_bad_frame_reg;
-
     //-------------------------------------------------------
     // Local ts_sec-and-ts_nsec-generation
     //-------------------------------------------------------
@@ -60,7 +64,7 @@ module tx_mac_interface (
     reg              wr_addr_updated_reg0;
     reg              wr_addr_updated_reg1;
     reg     [`BF:0]  wr_addr_reg0;
-    reg     [`BF:0]  wr_addr_reg0;
+    reg     [`BF:0]  wr_addr_reg1;
 
     ////////////////////////////////////////////////
     // ts_sec-and-ts_nsec-generation
@@ -118,60 +122,163 @@ module tx_mac_interface (
         if (!reset_n ) begin  // reset
             rd_addr <= 'b0;
             diff <= 'b0;
-            qwords_in_eth <= 'b0;
             tx_start <= 1'b0;
             tx_data_valid <= 'b0;
             tx_data <= 'b0;
-            state <= s0;
+            commited_rd_address_change <= 1'b0;
+            advance_pointer <= 1'b0;
+            synch <= 1'b0;
+            trigger_tx_frame <= 1'b0;
+            trigger_frame_fsm <= s0;
+            tx_frame_fsm <= s0;
         end
         
         else begin  // not reset
             
             diff <= wr_addr_reg1 + (~rd_addr) +1;
-            tx_start <= 1'b0;
-
-            rd_addr_prev1 <= rd_addr;
-            rd_addr_prev2 <= rd_addr_prev1;
-
-            case (state)
+            
+            case (trigger_frame_fsm)
 
                 s0 : begin
                     byte_counter <= rd_data[63:32];
-                    qwords_in_eth <= byte_counter[31:3];
-                    if (byte_counter[2:0]) begin
-                        qwords_in_eth <= byte_counter[31:3] +1;
-                    end
-                    
-                    tx_data_valid <= 'b0;
-                    next_rd_addr <= rd_addr + 1;
-                    if (diff >= qwords_in_eth) begin
-                        rd_addr <= next_rd_addr;
-                        tx_start <= 1'b1;
-                        state <= s1;
+                    qwords_in_eth <= rd_data[44:35];
+                    if (diff) begin
+                        trigger_frame_fsm <= s1;
                     end
                 end
 
                 s1 : begin
-                    tx_data <= rd_data;
-                    tx_data_valid <= 'hFF;
-                    next_rd_addr <= rd_addr + 1;
-                    if (tx_ack) begin
-                        rd_addr <= next_rd_addr;
-                        state <= s2;
+                    if (byte_counter[2:0]) begin
+                        qwords_in_eth <= byte_counter[12:3] +1;
+                    end
+
+                    case (byte_counter[2:0])                    // my deco
+                        3'b000 : begin
+                            last_tx_data_valid <= 8'b11111111;
+                        end
+                        3'b001 : begin
+                            last_tx_data_valid <= 8'b00000001;
+                        end
+                        3'b010 : begin
+                            last_tx_data_valid <= 8'b00000011;
+                        end
+                        3'b011 : begin
+                            last_tx_data_valid <= 8'b00000111;
+                        end
+                        3'b100 : begin
+                            last_tx_data_valid <= 8'b00001111;
+                        end
+                        3'b101 : begin
+                            last_tx_data_valid <= 8'b00011111;
+                        end
+                        3'b110 : begin
+                            last_tx_data_valid <= 8'b00111111;
+                        end
+                        3'b111 : begin
+                            last_tx_data_valid <= 8'b01111111;
+                        end
+                    endcase
+
+                    if (diff >= qwords_in_eth) begin
+                        trigger_tx_frame <= 1'b1;
+                        trigger_frame_fsm <= s2;
                     end
                 end
 
                 s2 : begin
-                    rd_addr <= rd_addr + 1;
+                    trigger_tx_frame <= 1'b0;
+                    if (synch) begin
+                        byte_counter <= rd_data[63:32];
+                        qwords_in_eth <= rd_data[44:35];
+                        trigger_frame_fsm <= s1;
+
+                        wr_addr_new_start <= wr_addr_reg1;
+                        if (rd_data[63]) begin
+                            advance_pointer <= 1'b1;
+                            trigger_frame_fsm <= s3;
+                        end
+                    end
+                end
+
+                s3 : begin
+                    advance_pointer <= 1'b0;
+                    trigger_frame_fsm <= s4;
+                end
+
+                s4 : begin
+                    trigger_frame_fsm <= s0;
+                end
+
+                default : begin 
+                    trigger_frame_fsm <= s0;
+                end
+
+            endcase
+
+            synch <= 1'b0;
+            commited_rd_address_change <= 1'b0;
+            tx_start <= 1'b0;
+            tx_data_valid <= 'b0;
+
+            case (tx_frame_fsm)
+
+                s0: begin
+                    next_rd_addr <= rd_addr +1;
+                    if (trigger_tx_frame) begin
+                        rd_addr <= next_rd_addr;
+                        tx_frame_fsm <= s1;
+                    end
+                    else if (advance_pointer) begin
+                        commited_rd_address_change <= 1'b1;
+                        rd_addr <= wr_addr_new_start;
+                    end
+                end
+
+                s1 : begin
+                    rd_addr <= rd_addr +1;
+                    tx_start <= 1'b1;
+                    tx_frame_fsm <= s2;
+                end
+
+                s2 : begin
                     tx_data <= rd_data;
-                    if (llenando al ultimo) begin
-                        tx_data_valid <= tvalid;
-                        state <= s3;
+                    tx_data_valid <= 'hFF;
+                    rd_addr <= rd_addr +1;
+                    tx_frame_fsm <= s3;
+                end
+
+                s3 : begin
+                    tx_data_valid <= 'hFF;
+                    qwords_sent <= 'h001;
+                    next_rd_addr <= rd_addr +1;
+                    rd_data_aux <= rd_data;
+                    tx_frame_fsm <= s4;
+                end
+
+                s4 : begin
+                    tx_data_valid <= 'hFF;
+                    if (tx_ack) begin
+                        tx_data <= rd_data_aux;
+                        rd_addr <= next_rd_addr;
+                        tx_frame_fsm <= s5;
+                    end
+                end
+
+                s5 : begin
+                    tx_data <= rd_data;
+                    rd_addr <= rd_addr +1;
+                    tx_data_valid <= 'hFF;
+                    commited_rd_address_change <= commited_rd_address_change ? 1'b0 : 1'b1;
+                    qwords_sent <= qwords_sent +1;
+                    if (qwords_in_eth == qwords_sent) begin
+                        synch <= 1'b1;
+                        tx_data_valid <= last_tx_data_valid;
+                        tx_frame_fsm <= s0;
                     end
                 end
 
                 default : begin 
-                    state <= s0;
+                    tx_frame_fsm <= s0;
                 end
 
             endcase
@@ -183,3 +290,6 @@ endmodule // tx_mac_interface
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
+
+//With this implementation we cannot drive the interface with back-to-back frames. We must process the trigger logic in other clock domain, similar to the rx part.
+//this takes one or two clks.
