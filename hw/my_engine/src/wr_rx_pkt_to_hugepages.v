@@ -5,7 +5,7 @@
 
 `define TX_MEM_WR64_FMT_TYPE 7'b11_00000
 
-module rx_wr_pkt_to_hugepages (
+module wr_rx_pkt_to_hugepages (
 
     input    trn_clk,
     input    trn_lnk_up_n,
@@ -553,7 +553,7 @@ module rx_wr_pkt_to_hugepages (
     end  //always
    
 
-endmodule // rx_wr_pkt_to_hugepages
+endmodule // wr_rx_pkt_to_hugepages
 
 //[1] the experiment shows that we cannot go too fast to send tlps again
 /*

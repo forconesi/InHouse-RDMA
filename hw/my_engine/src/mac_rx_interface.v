@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 `include "includes.v"
 
-module rx_mac_interface (
+module mac_rx_interface (
 
     input    clk,
     input    reset_n,
@@ -227,7 +227,7 @@ module rx_mac_interface (
     end  //always
    
 
-endmodule // rx_mac_interface
+endmodule // mac_rx_interface
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
