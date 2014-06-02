@@ -56,48 +56,55 @@ static struct lbuf_hw {
 #endif
 
 #define LBUF_SIZE	HPAGE_PMD_SIZE
+#define LBUF_ORDER	HPAGE_PMD_ORDER
 
-static inline struct page *alloc_lbuf(void)
+static inline void *alloc_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 {
-	return alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
+	desc->kern_addr = NULL;
+#ifdef CONFIG_LBUF_COHERENT
+	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
+					       &desc->dma_addr);
+	if (desc->kern_addr)
+		desc->page = virt_to_page(desc->kern_addr);
+#else
+	desc->page = alloc_pages(GFP_TRANSHUGE, LBUF_ORDER);
+	if (desc->page)
+		desc->kern_addr = page_address(desc->page);
+#endif
+	return desc->kern_addr;
 }
 
-static inline void free_lbuf(struct page *page)
-{
-	__free_pages(page, HPAGE_PMD_ORDER);
-}
-
-static void unmap_and_free_lbuf(struct nf10_adapter *adapter,
-				struct desc *desc, int rx)
+static inline void free_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 {
 #ifdef CONFIG_LBUF_COHERENT
 	pci_free_consistent(adapter->pdev, LBUF_SIZE,
 			    desc->kern_addr, desc->dma_addr);
 #else
-	pci_unmap_single(adapter->pdev, desc->dma_addr, LBUF_SIZE,
-			rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
-	free_lbuf(desc->page);
+	__free_pages(desc->page, LBUF_ORDER);
 #endif
+}
+
+static void unmap_and_free_lbuf(struct nf10_adapter *adapter,
+				struct desc *desc, int rx)
+{
+#ifndef CONFIG_LBUF_COHERENT	/* explicitly unmap to/from normal pages */
+	pci_unmap_single(adapter->pdev, desc->dma_addr, LBUF_SIZE,
+			 rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
+#endif
+	free_lbuf(adapter, desc);
 }
 
 static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
 			      struct desc *desc, int rx)
 {
-#ifdef CONFIG_LBUF_COHERENT
-	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
-					       &desc->dma_addr);
-	if (desc->kern_addr == NULL)
-		return -ENOMEM;
-	desc->page = virt_to_page(desc->kern_addr);
-#else
-	if ((desc->page = alloc_lbuf()) == NULL)
+	if (alloc_lbuf(adapter, desc) == NULL)
 		return -ENOMEM;
 
-	desc->kern_addr = page_address(desc->page);
+#ifndef CONFIG_LBUF_COHERENT	/* explicitly map to/from normal pages */
 	desc->dma_addr = pci_map_single(adapter->pdev, desc->kern_addr,
 			LBUF_SIZE, rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
 	if (pci_dma_mapping_error(adapter->pdev, desc->dma_addr)) {
-		free_lbuf(desc->page);
+		free_lbuf(adapter, desc);
 		return -EIO;
 	}
 #endif
