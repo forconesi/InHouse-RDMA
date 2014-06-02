@@ -42,7 +42,6 @@ struct nf10_hw_ops {
 	int		(*init_buffers)(struct nf10_adapter *adapter);
 	void		(*free_buffers)(struct nf10_adapter *adapter);
 	int		(*get_napi_budget)(void);
-	void		(*prepare_rx_buffers)(struct nf10_adapter *adapter);
 	void		(*process_rx_irq)(struct nf10_adapter *adapter, 
 					  int *work_done, int budget);
 	netdev_tx_t     (*start_xmit)(struct nf10_adapter *adapter,

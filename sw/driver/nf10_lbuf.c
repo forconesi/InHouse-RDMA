@@ -1,6 +1,7 @@
 #include <linux/etherdevice.h>
 #include "nf10.h"
 #include "nf10_lbuf.h"
+#include "nf10_fops.h"
 
 #ifdef CONFIG_SKBPOOL
 #include "skbpool.h"
@@ -55,108 +56,66 @@ static struct lbuf_hw {
 #endif
 
 #define LBUF_SIZE	HPAGE_PMD_SIZE
+#define LBUF_ORDER	HPAGE_PMD_ORDER
 
-static inline struct page *alloc_lbuf(void)
+static inline void *alloc_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 {
-	return alloc_pages(GFP_TRANSHUGE, HPAGE_PMD_ORDER);
+	desc->kern_addr = NULL;
+#ifdef CONFIG_LBUF_COHERENT
+	/* NOTE that pci_alloc_consistent returns allocated pages that have
+	 * been zeroed, so taking longer time than normal allocation */
+	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
+					       &desc->dma_addr);
+	if (desc->kern_addr)
+		desc->page = virt_to_page(desc->kern_addr);
+#else
+	desc->page = alloc_pages(GFP_TRANSHUGE, LBUF_ORDER);
+	if (desc->page)
+		desc->kern_addr = page_address(desc->page);
+#endif
+	return desc->kern_addr;
 }
 
-static inline void free_lbuf(struct page *page)
-{
-	__free_pages(page, HPAGE_PMD_ORDER);
-}
-
-static void unmap_and_free_lbuf(struct nf10_adapter *adapter,
-				struct desc *desc, int rx)
+static inline void free_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 {
 #ifdef CONFIG_LBUF_COHERENT
 	pci_free_consistent(adapter->pdev, LBUF_SIZE,
 			    desc->kern_addr, desc->dma_addr);
 #else
-	pci_unmap_single(adapter->pdev, desc->dma_addr, LBUF_SIZE,
-			rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
-	free_lbuf(desc->page);
+	__free_pages(desc->page, LBUF_ORDER);
 #endif
+}
+
+static void unmap_and_free_lbuf(struct nf10_adapter *adapter,
+				struct desc *desc, int rx)
+{
+#ifndef CONFIG_LBUF_COHERENT	/* explicitly unmap to/from normal pages */
+	pci_unmap_single(adapter->pdev, desc->dma_addr, LBUF_SIZE,
+			 rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
+#endif
+	free_lbuf(adapter, desc);
+	pr_debug("%s: addr=(kern=%p:dma=%p)\n", __func__, desc->kern_addr, (void *)desc->dma_addr);
 }
 
 static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
 			      struct desc *desc, int rx)
 {
-retry:
-#ifdef CONFIG_LBUF_COHERENT
-	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
-					       &desc->dma_addr);
-	if (desc->kern_addr == NULL)
-		return -ENOMEM;
-	desc->page = virt_to_page(desc->kern_addr);
-#else
-	if ((desc->page = alloc_lbuf()) == NULL)
+	if (alloc_lbuf(adapter, desc) == NULL)
 		return -ENOMEM;
 
-	desc->kern_addr = page_address(desc->page);
+#ifndef CONFIG_LBUF_COHERENT	/* explicitly map to/from normal pages */
 	desc->dma_addr = pci_map_single(adapter->pdev, desc->kern_addr,
 			LBUF_SIZE, rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
 	if (pci_dma_mapping_error(adapter->pdev, desc->dma_addr)) {
-		free_lbuf(desc->page);
 		netif_err(adapter, probe, adapter->netdev,
 			  "failed to map to dma addr (kern_addr=%p)\n",
 			  desc->kern_addr);
+		free_lbuf(adapter, desc);
 		return -EIO;
 	}
 #endif
-
-	/* FIXME: due to the current HW constraint, dma bus address should
-	 * not be within 32bit address space. So, this fixup will be removed */
-	if ((desc->dma_addr >> 32) == 0) {
-		unmap_and_free_lbuf(adapter, desc, rx);
-		goto retry;
-	}
-
+	pr_debug("%s: addr=(kern=%p:dma=%p)\n", __func__, desc->kern_addr, (void *)desc->dma_addr);
 	return 0;
-}
-
-static int __nf10_lbuf_init_buffers(struct nf10_adapter *adapter, int rx)
-{
-	struct large_buffer *lbuf = get_lbuf();
-	int i;
-	int err = 0;
-
-	for (i = 0; i < NR_LBUF; i++) {
-		struct desc *desc = &lbuf->descs[rx][i];
-		if ((err = alloc_and_map_lbuf(adapter, desc, rx)))
-			break;
-		netif_info(adapter, probe, adapter->netdev,
-			   "%s lbuf[%d] allocated at kern_addr=%p/dma_addr=%p"
-			   " pfn=%lx (size=%lu bytes)\n", rx ? "RX" : "TX", i,
-			   desc->kern_addr, (void *)desc->dma_addr, 
-			   page_to_pfn(desc->page), LBUF_SIZE);
-	}
-	
-
-	if (unlikely(err))	/* failed to allocate all lbufs */
-		for (i--; i >= 0; i--)
-			unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
-	else {
-		if (rx)
-			lbuf->rx_cons = 0;
-		else
-			lbuf->tx_cons = 0;
-	}
-
-	return err;
-}
-
-static void __nf10_lbuf_free_buffers(struct nf10_adapter *adapter, int rx)
-{
-	struct large_buffer *lbuf = get_lbuf();
-	int i;
-
-	for (i = 0; i < NR_LBUF; i++) {
-		unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
-		netif_info(adapter, drv, adapter->netdev,
-			   "%s lbuf[%d] is freed from kern_addr=%p",
-			   rx ? "RX" : "TX", i, lbuf->descs[rx][i].kern_addr);
-	}
 }
 
 static void inc_rx_cons(struct nf10_adapter *adapter)
@@ -190,6 +149,60 @@ static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx
 			   idx, lbuf->rx_cons);
 
 	inc_rx_cons(adapter);
+}
+
+static void nf10_lbuf_prepare_rx_all(struct nf10_adapter *adapter)
+{
+	unsigned long i;
+
+	for (i = 0; i < NR_LBUF; i++)
+		nf10_lbuf_prepare_rx(adapter, i);
+}
+
+static int __nf10_lbuf_init_buffers(struct nf10_adapter *adapter, int rx)
+{
+	struct large_buffer *lbuf = get_lbuf();
+	int i;
+	int err = 0;
+
+	for (i = 0; i < NR_LBUF; i++) {
+		struct desc *desc = &lbuf->descs[rx][i];
+		if ((err = alloc_and_map_lbuf(adapter, desc, rx)))
+			break;
+		netif_info(adapter, probe, adapter->netdev,
+			   "%s lbuf[%d] allocated at kern_addr=%p/dma_addr=%p"
+			   " pfn=%lx (size=%lu bytes)\n", rx ? "RX" : "TX", i,
+			   desc->kern_addr, (void *)desc->dma_addr, 
+			   page_to_pfn(desc->page), LBUF_SIZE);
+	}
+	
+
+	if (unlikely(err))	/* failed to allocate all lbufs */
+		for (i--; i >= 0; i--)
+			unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
+	else {
+		if (rx) {
+			lbuf->rx_cons = 0;
+			nf10_lbuf_prepare_rx_all(adapter);
+		}
+		else
+			lbuf->tx_cons = 0;
+	}
+
+	return err;
+}
+
+static void __nf10_lbuf_free_buffers(struct nf10_adapter *adapter, int rx)
+{
+	struct large_buffer *lbuf = get_lbuf();
+	int i;
+
+	for (i = 0; i < NR_LBUF; i++) {
+		unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
+		netif_info(adapter, drv, adapter->netdev,
+			   "%s lbuf[%d] is freed from kern_addr=%p",
+			   rx ? "RX" : "TX", i, lbuf->descs[rx][i].kern_addr);
+	}
 }
 
 #ifdef CONFIG_SKBPOOL
@@ -409,48 +422,33 @@ static int nf10_lbuf_napi_budget(void)
 	return 2;
 }
 
-static void nf10_lbuf_prepare_rx_all(struct nf10_adapter *adapter)
-{
-	unsigned long i;
-
-	for (i = 0; i < NR_LBUF; i++)
-		nf10_lbuf_prepare_rx(adapter, i);
-}
-
 static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter, 
 				     int *work_done, int budget)
 {
 	struct large_buffer *lbuf = get_lbuf();
-	struct desc *rx_descs = lbuf->descs[RX];
 	unsigned int rx_cons = lbuf->rx_cons;
-	dma_addr_t dma_addr;
-	void *kern_addr;
+	struct desc *cur_rx_desc = &lbuf->descs[RX][rx_cons];
+	struct desc rx_desc = *cur_rx_desc;	/* copy */
 
-	dma_addr = rx_descs[rx_cons].dma_addr;
-	kern_addr = rx_descs[rx_cons].kern_addr;
+	alloc_and_map_lbuf(adapter, cur_rx_desc, RX);
+	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
 
 #ifndef CONFIG_LBUF_COHERENT
-	pci_dma_sync_single_for_cpu(adapter->pdev, dma_addr,
+	pci_dma_sync_single_for_cpu(adapter->pdev, rx_desc.dma_addr,
 				    LBUF_SIZE, PCI_DMA_FROMDEVICE);
 #endif
-	/* if direct user access mode is enabled, just wake up
-	 * a waiting user thread. FIXME: replace with API */
-	if (adapter->nr_user_mmap > 0) { 
-		if (likely(waitqueue_active(&adapter->wq_user_intr)))
-			wake_up(&adapter->wq_user_intr);
-		/* in case a user thread has mapped rx buffers, but
-		 * not waiting for an interrupt, just skip it while granting
-		 * an opportunity for the thread to poll buffers later */
+	/* if a user process can handle it, pass it up and return */
+	if (nf10_user_rx_callback(adapter))
 		return;
-	}
+
 #ifdef CONFIG_XEN_NF_BACKEND
 	/* FIXME: test code */
 	if (1) {
 		unsigned long size = LBUF_SIZE;
 		unsigned long unit = size >> 3;	/* divided by 8, so 256K at a time */
 		while (size > 0 &&
-		       xenvif_rx_action(1, kern_addr, unit) == 0) {
-			kern_addr += unit;
+		       xenvif_rx_action(1, rx_desc.kern_addr, unit) == 0) {
+			rx_desc.kern_addr += unit;
 			size -= unit;
 		}
 		*work_done = 1;
@@ -458,9 +456,8 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	else
 #endif
 	/* currently, just process one large buffer, regardless of budget */
-	nf10_lbuf_deliver_skbs(adapter, kern_addr);
-
-	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
+	nf10_lbuf_deliver_skbs(adapter, rx_desc.kern_addr);
+	unmap_and_free_lbuf(adapter, &rx_desc, RX);
 	*work_done = 1;
 }
 
@@ -484,7 +481,6 @@ static struct nf10_hw_ops lbuf_hw_ops = {
 	.init_buffers		= nf10_lbuf_init_buffers,
 	.free_buffers		= nf10_lbuf_free_buffers,
 	.get_napi_budget	= nf10_lbuf_napi_budget,
-	.prepare_rx_buffers	= nf10_lbuf_prepare_rx_all,
 	.process_rx_irq		= nf10_lbuf_process_rx_irq,
 	.start_xmit		= nf10_lbuf_start_xmit,
 	.clean_tx_irq		= nf10_lbuf_clean_tx_irq

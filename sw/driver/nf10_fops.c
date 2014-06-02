@@ -127,3 +127,18 @@ int nf10_remove_fops(struct nf10_adapter *adapter)
 
 	return 0;
 }
+
+bool nf10_user_rx_callback(struct nf10_adapter *adapter)
+{
+	/* if direct user access mode is enabled, just wake up
+	 * a waiting user thread */
+	if (adapter->nr_user_mmap > 0) { 
+		if (likely(waitqueue_active(&adapter->wq_user_intr)))
+			wake_up(&adapter->wq_user_intr);
+		/* in case a user thread has mapped rx buffers, but
+		 * not waiting for an interrupt, just skip it while granting
+		 * an opportunity for the thread to poll buffers later */
+		return true;
+	}
+	return false;
+}

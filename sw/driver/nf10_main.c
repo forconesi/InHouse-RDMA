@@ -58,11 +58,6 @@ static int nf10_napi_budget(struct nf10_adapter *adapter)
 	return adapter->hw_ops->get_napi_budget();
 }
 
-static void nf10_prepare_rx_buffers(struct nf10_adapter *adapter)
-{
-	adapter->hw_ops->prepare_rx_buffers(adapter);
-}
-
 void nf10_process_rx_irq(struct nf10_adapter *adapter, int *work_done, int budget)
 {
 	adapter->hw_ops->process_rx_irq(adapter, work_done, budget);
@@ -245,8 +240,6 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		pr_err("failed to initialize packet buffers: err=%d\n", err);
 		goto err_init_buffers;
 	}
-
-	nf10_prepare_rx_buffers(adapter);
 
 	/* direct user access */
 	nf10_init_fops(adapter);
