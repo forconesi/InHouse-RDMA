@@ -242,6 +242,7 @@ module my_top (
     (* KEEP = "TRUE" *)wire   [`BF:0]                                    tx_commited_rd_address;
     (* KEEP = "TRUE" *)wire                                              tx_commited_rd_address_change;
     (* KEEP = "TRUE" *)wire                                              tx_wr_addr_updated;
+                       wire   [`BF:0]                                    tx_commited_wr_addr;
 
     ////////////////////////////////////////////////
     // INSTRUMENTATION
@@ -525,7 +526,8 @@ module my_top (
         .commited_rd_address(tx_commited_rd_address),  // O [`BF:0]
         .commited_rd_address_change(tx_commited_rd_address_change),  // O
         .wr_addr(tx_wr_addr),                   // I [`BF:0]
-        .wr_addr_updated(tx_wr_addr_updated)  // I
+        .wr_addr_updated(tx_wr_addr_updated),   // I
+        .commited_wr_addr(tx_commited_wr_addr)  // I [`BF:0]
         );
     //////////////////////////////////////////////////////////////////////////////////////////
     // Transmition side of the NIC (END)
@@ -606,6 +608,7 @@ module my_top (
         .tx_commited_rd_address(tx_commited_rd_address),    // I [`BF:0]
         .tx_commited_rd_address_change(tx_commited_rd_address_change),    // I 
         .tx_wr_addr_updated(tx_wr_addr_updated),            // O 
+        .tx_commited_wr_addr(tx_commited_wr_addr),          // O [`BF:0]
 
         // Rx Local-Link
 

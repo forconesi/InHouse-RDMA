@@ -71,6 +71,7 @@ module  pci_exp_64b_app (
     input      [`BF:0]                            tx_commited_rd_address,
     input                                         tx_commited_rd_address_change,
     output                                        tx_wr_addr_updated,
+    output     [`BF:0]                            tx_commited_wr_addr,
 
     // Rx Local-Link
 
@@ -423,7 +424,8 @@ module  pci_exp_64b_app (
         .wr_en ( tx_wr_en ),                        // O
         .commited_rd_address ( tx_commited_rd_address ),   // I [`BF:0]
         .commited_rd_address_change ( tx_commited_rd_address_change ),    // I
-        .wr_addr_updated ( tx_wr_addr_updated )             // O
+        .wr_addr_updated ( tx_wr_addr_updated ),             // O
+        .commited_wr_addr ( tx_commited_wr_addr )            // O [`BF:0]
         );
 
     //////////////////////////////////////////////////////////////////////////////////////////

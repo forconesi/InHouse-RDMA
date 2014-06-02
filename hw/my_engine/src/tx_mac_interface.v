@@ -22,7 +22,8 @@ module tx_mac_interface (
     output reg    [`BF:0]     commited_rd_address,
     output reg                commited_rd_address_change,
     input         [`BF:0]     wr_addr,                         //250 MHz domain driven
-    input                     wr_addr_updated                         //250 MHz domain driven
+    input                     wr_addr_updated,                         //250 MHz domain driven
+    input         [`BF:0]     commited_wr_addr                //250 MHz domain driven
 
     );
 
@@ -63,8 +64,8 @@ module tx_mac_interface (
     //-------------------------------------------------------
     reg              wr_addr_updated_reg0;
     reg              wr_addr_updated_reg1;
-    reg     [`BF:0]  wr_addr_reg0;
-    reg     [`BF:0]  wr_addr_reg1;
+    reg     [`BF:0]  commited_wr_addr_reg0;
+    reg     [`BF:0]  commited_wr_addr_reg1;
 
     ////////////////////////////////////////////////
     // ts_sec-and-ts_nsec-generation
@@ -97,18 +98,18 @@ module tx_mac_interface (
         if (!reset_n ) begin  // reset
             wr_addr_updated_reg0 <= 1'b0;
             wr_addr_updated_reg1 <= 1'b0;
-            wr_addr_reg0 <= 'b0;
-            wr_addr_reg1 <= 'b0;
+            commited_wr_addr_reg0 <= 'b0;
+            commited_wr_addr_reg1 <= 'b0;
         end
         
         else begin  // not reset
             wr_addr_updated_reg0 <= wr_addr_updated;
             wr_addr_updated_reg1 <= wr_addr_updated_reg0;
 
-            wr_addr_reg0 <= wr_addr;
+            commited_wr_addr_reg0 <= commited_wr_addr;
 
             if (wr_addr_updated_reg1) begin                                      // transitory off
-                wr_addr_reg1 <= wr_addr_reg0;
+                commited_wr_addr_reg1 <= commited_wr_addr_reg0;
             end
 
         end     // not reset
@@ -135,7 +136,7 @@ module tx_mac_interface (
         
         else begin  // not reset
             
-            diff <= wr_addr_reg1 + (~rd_addr) +1;
+            diff <= commited_wr_addr_reg1 + (~rd_addr) +1;
             
             case (trigger_frame_fsm)
 
@@ -192,7 +193,7 @@ module tx_mac_interface (
                         qwords_in_eth <= rd_data[44:35];
                         trigger_frame_fsm <= s1;
 
-                        wr_addr_new_start <= wr_addr_reg1;
+                        wr_addr_new_start <= commited_wr_addr_reg1;
                         if (rd_data[63]) begin
                             advance_pointer <= 1'b1;
                             trigger_frame_fsm <= s3;
@@ -249,7 +250,6 @@ module tx_mac_interface (
 
                 s3 : begin
                     tx_data_valid <= 'hFF;
-                    qwords_sent <= 'h001;
                     next_rd_addr <= rd_addr +1;
                     rd_data_aux <= rd_data;
                     tx_frame_fsm <= s4;
@@ -257,6 +257,7 @@ module tx_mac_interface (
 
                 s4 : begin
                     tx_data_valid <= 'hFF;
+                    qwords_sent <= 'h003;
                     if (tx_ack) begin
                         tx_data <= rd_data_aux;
                         rd_addr <= next_rd_addr;

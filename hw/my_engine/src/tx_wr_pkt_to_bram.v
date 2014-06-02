@@ -41,7 +41,8 @@ module tx_wr_pkt_to_bram (
 
     input       [`BF:0]     commited_rd_address,             // 156.25 MHz driven
     input                   commited_rd_address_change,      // 156.25 MHz driven
-    output reg              wr_addr_updated                  // to 156.25 MHz
+    output reg              wr_addr_updated,                 // to 156.25 MHz
+    output reg  [`BF:0]     commited_wr_addr
     );
 
     wire            reset_n;
@@ -330,6 +331,7 @@ module tx_wr_pkt_to_bram (
                 s0 : begin
                     qwords_on_tlp <= trn_rd[41:33];
                     wr_addr_updated_internal <= 1'b1;
+                    commited_wr_addr <= look_ahead_wr_addr;
                     if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n)) begin
                         if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] == `SC) ) begin
                             receiving_completion <= 1'b1;
@@ -352,7 +354,6 @@ module tx_wr_pkt_to_bram (
                         wr_addr <= look_ahead_wr_addr;
                         aux <= trn_rd[31:0];
                         if (!trn_reof_n) begin
-                            commited_wr_addr <= look_ahead_wr_addr;
                             wr_to_bram_fsm <= s0;
                         end
                     end
