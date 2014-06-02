@@ -742,7 +742,7 @@ static struct xen_netif_rx_response *make_rx_response(struct xenvif *vif,
 
 /* packet processing part interacting with nf dma engine (e.g., lbuf)
  * nf core should identify domid, by which vif is located */
-int xenvif_rx_action(unsigned long domid, void *buf_addr, size_t size)
+static int __xenvif_rx_action(struct xenvif *vif, void *buf_addr, size_t size)
 {
 	RING_IDX max_slots_needed;
 	unsigned copy_prod, copy_cons;
@@ -754,9 +754,6 @@ int xenvif_rx_action(unsigned long domid, void *buf_addr, size_t size)
 	int status;
 	int ret;
 	bool need_to_notify = false;
-	struct xenvif *vif = FIXME_vif;	/* FIXME */
-	if (vif == NULL)
-		return -1;
 
 	max_slots_needed = DIV_ROUND_UP(size, PAGE_SIZE);
 	pr_debug("max_slots_needed=%u\n", max_slots_needed);
@@ -820,6 +817,29 @@ int xenvif_rx_action(unsigned long domid, void *buf_addr, size_t size)
 		notify_remote_via_irq(vif->rx_irq);
 
 	pr_debug("end of deliverying to frontend\n");
+
+	return 0;
+}
+
+int xenvif_rx_action(unsigned long domid, void *buf_addr, size_t size)
+{
+	int chunk_order = 3;
+	unsigned long unit;
+	struct xenvif *vif = FIXME_vif;	/* FIXME */
+
+	if (vif == NULL)
+		return -1;
+
+	if ((size >> (PAGE_SHIFT - chunk_order)) <= XEN_NETIF_RX_RING_SIZE)
+		return __xenvif_rx_action(vif, buf_addr, size);
+
+	/* now we have too large buffer that might not fit in rx ring
+	 * so, chunk it and pass each chunk to front */
+	unit = size >> chunk_order;
+	while (size > 0 && __xenvif_rx_action(vif, buf_addr, unit) == 0) {
+		buf_addr += unit;
+		size -= unit;
+	}
 
 	return 0;
 }

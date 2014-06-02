@@ -442,19 +442,10 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 		return;
 
 #ifdef CONFIG_XEN_NF_BACKEND
-	/* FIXME: test code */
-	if (1) {
-		unsigned long size = LBUF_SIZE;
-		unsigned long unit = size >> 3;	/* divided by 8, so 256K at a time */
-		void *kern_addr = rx_desc.kern_addr;
-		while (size > 0 &&
-		       xenvif_rx_action(1, kern_addr, unit) == 0) {
-			kern_addr += unit;
-			size -= unit;
-		}
-		*work_done = 1;
-	}
-	else
+	/* if failed to deliver to frontend, fallback with host processing.
+	 * currently, domid is set as an arbitrary number (1), since we don't
+	 * have packet classification in hardware right now */
+	if (xenvif_rx_action(1 /* FIXME */, rx_desc.kern_addr, LBUF_SIZE))
 #endif
 	/* currently, just process one large buffer, regardless of budget */
 	nf10_lbuf_deliver_skbs(adapter, rx_desc.kern_addr);
