@@ -27,6 +27,7 @@ module tx_rd_host_mem (
 
     input       [63:0]     huge_page_addr,
     input                  read_chunk,
+    input       [8:0]      qwords_to_rd,
     output reg             read_chunk_ack,
 
     // Arbitrations hanshake
@@ -113,7 +114,7 @@ module tx_rd_host_mem (
                                 1'b0,   //EP (poisoned data)
                                 2'b10,  //Relaxed ordering, No spoon in processor cache
                                 2'b0,   //reserved
-                                10'h080   //lenght in DWs. 10-bit field 128DWs == 512 bytes
+                                {qwords_to_rd, 1'b0}          //10'h080   //lenght in DWs. 10-bit field 128DWs == 512 bytes
                             };
                     trn_td[31:0] <= {
                                 cfg_completer_id,   //Requester ID

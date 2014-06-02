@@ -44,11 +44,9 @@ module tx_mac_interface (
     reg     [9:0]     qwords_in_eth;
     reg     [9:0]     qwords_sent;
     reg     [`BF:0]   diff;
-    reg               advance_pointer;
     reg               synch;
     reg               trigger_tx_frame;
     reg     [7:0]     last_tx_data_valid;
-    reg     [`BF:0]   wr_addr_new_start;
     reg     [`BF:0]   next_rd_addr;
     reg     [63:0]    rd_data_aux;
     
@@ -127,7 +125,6 @@ module tx_mac_interface (
             tx_data_valid <= 'b0;
             tx_data <= 'b0;
             commited_rd_address_change <= 1'b0;
-            advance_pointer <= 1'b0;
             synch <= 1'b0;
             trigger_tx_frame <= 1'b0;
             trigger_frame_fsm <= s0;
@@ -192,22 +189,7 @@ module tx_mac_interface (
                         byte_counter <= rd_data[63:32];
                         qwords_in_eth <= rd_data[44:35];
                         trigger_frame_fsm <= s1;
-
-                        wr_addr_new_start <= commited_wr_addr_reg1;
-                        if (rd_data[63]) begin
-                            advance_pointer <= 1'b1;
-                            trigger_frame_fsm <= s3;
-                        end
                     end
-                end
-
-                s3 : begin
-                    advance_pointer <= 1'b0;
-                    trigger_frame_fsm <= s4;
-                end
-
-                s4 : begin
-                    trigger_frame_fsm <= s0;
                 end
 
                 default : begin 
@@ -228,10 +210,6 @@ module tx_mac_interface (
                     if (trigger_tx_frame) begin
                         rd_addr <= next_rd_addr;
                         tx_frame_fsm <= s1;
-                    end
-                    else if (advance_pointer) begin
-                        commited_rd_address_change <= 1'b1;
-                        rd_addr <= wr_addr_new_start;
                     end
                 end
 
@@ -273,6 +251,7 @@ module tx_mac_interface (
                     qwords_sent <= qwords_sent +1;
                     if (qwords_in_eth == qwords_sent) begin
                         synch <= 1'b1;
+                        rd_addr <= rd_addr;
                         tx_data_valid <= last_tx_data_valid;
                         tx_frame_fsm <= s0;
                     end

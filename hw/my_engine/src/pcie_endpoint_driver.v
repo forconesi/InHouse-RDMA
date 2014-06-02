@@ -204,6 +204,7 @@ module  pci_exp_64b_app (
     //-------------------------------------------------------
     wire   [63:0]     tx_huge_page_addr_read_from;
     wire              tx_read_chunk;
+    wire   [8:0]      tx_qwords_to_rd;
     wire              tx_read_chunk_ack;
 
     //////////////////////////////////////////////////////////////////////////////////////////
@@ -392,6 +393,7 @@ module  pci_exp_64b_app (
 
         .huge_page_addr ( tx_huge_page_addr_read_from ),     // I [63:0]
         .read_chunk ( tx_read_chunk ), // I
+        .qwords_to_rd ( tx_qwords_to_rd ),  // I [8:0]
         .read_chunk_ack ( tx_read_chunk_ack ), // O
         .my_turn ( tx_turn ),     // I
         .driving_interface ( tx_driven )      // O
@@ -418,6 +420,7 @@ module  pci_exp_64b_app (
         .huge_page_free_2 ( tx_huge_page_free_2 ),  // O
         .huge_page_addr_read_from ( tx_huge_page_addr_read_from ),  // O [63:0]
         .read_chunk ( tx_read_chunk ),              // O
+        .qwords_to_rd ( tx_qwords_to_rd ),          // O [8:0]
         .read_chunk_ack ( tx_read_chunk_ack ),      // I
         .wr_addr ( tx_wr_addr ),                    // O [`BF:0]
         .wr_data ( tx_wr_data ),                    // O [63:0]

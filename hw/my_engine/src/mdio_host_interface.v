@@ -144,6 +144,31 @@ module mdio_host_interface (
                     host_int_fsm <= s3;
                 end
 
+                s3 : begin                                  // Transmitter Configuration
+                    host_opcode[1] <= 1'b0x;
+                    host_miim_sel <= 1'b0;
+                    host_addr <= 10'h280;
+                    host_wr_data[23] <= 1'b0;               // Transmitter Preserve Preamble Enable
+                    host_wr_data[24] <= 1'b0;               // Deficit Idle Count Enable
+                    host_wr_data[25] <= 1'b0;               // Interframe Gap Adjust Enable
+                    host_wr_data[26] <= 1'b0;               // WAN Mode Enable
+                    host_wr_data[27] <= 1'b0;               // VLAN Enable
+                    host_wr_data[28] <= 1'b1;               // Transmitter Enable
+                    host_wr_data[29] <= 1'b0;               // In-band FCS Enable
+                    host_wr_data[30] <= 1'b0;               // Jumbo Frame Enable
+                    host_wr_data[31] <= 1'b0;               // Transmitter Reset
+                    host_int_fsm <= s2;
+                end
+
+                s2 : begin
+                    host_opcode <= 2'b11;
+                    host_addr <= 10'b0;
+                    host_wr_data <= 32'b0;
+                    host_miim_sel <= 1'b0;
+                    host_req <= 1'b0;
+                    host_int_fsm <= s3;
+                end
+
                 s3 : begin                                  // Management Configuration Word
                     host_opcode[1] <= 2'b0x;
                     host_addr <= 10'h340;
