@@ -62,6 +62,8 @@ static inline void *alloc_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 {
 	desc->kern_addr = NULL;
 #ifdef CONFIG_LBUF_COHERENT
+	/* NOTE that pci_alloc_consistent returns allocated pages that have
+	 * been zeroed, so taking longer time than normal allocation */
 	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
 					       &desc->dma_addr);
 	if (desc->kern_addr)
@@ -92,6 +94,7 @@ static void unmap_and_free_lbuf(struct nf10_adapter *adapter,
 			 rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
 #endif
 	free_lbuf(adapter, desc);
+	pr_debug("%s: addr=(kern=%p:dma=%p)\n", __func__, desc->kern_addr, (void *)desc->dma_addr);
 }
 
 static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
@@ -108,6 +111,7 @@ static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
 		return -EIO;
 	}
 #endif
+	pr_debug("%s: addr=(kern=%p:dma=%p)\n", __func__, desc->kern_addr, (void *)desc->dma_addr);
 	return 0;
 }
 
@@ -419,16 +423,15 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 				     int *work_done, int budget)
 {
 	struct large_buffer *lbuf = get_lbuf();
-	struct desc *rx_descs = lbuf->descs[RX];
 	unsigned int rx_cons = lbuf->rx_cons;
-	dma_addr_t dma_addr;
-	void *kern_addr;
+	struct desc *cur_rx_desc = &lbuf->descs[RX][rx_cons];
+	struct desc rx_desc = *cur_rx_desc;	/* copy */
 
-	dma_addr = rx_descs[rx_cons].dma_addr;
-	kern_addr = rx_descs[rx_cons].kern_addr;
+	alloc_and_map_lbuf(adapter, cur_rx_desc, RX);
+	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
 
 #ifndef CONFIG_LBUF_COHERENT
-	pci_dma_sync_single_for_cpu(adapter->pdev, dma_addr,
+	pci_dma_sync_single_for_cpu(adapter->pdev, rx_desc.dma_addr,
 				    LBUF_SIZE, PCI_DMA_FROMDEVICE);
 #endif
 	/* if a user process can handle it, pass it up and return */
@@ -436,8 +439,8 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 		return;
 
 	/* currently, just process one large buffer, regardless of budget */
-	nf10_lbuf_deliver_skbs(adapter, kern_addr);
-	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
+	nf10_lbuf_deliver_skbs(adapter, rx_desc.kern_addr);
+	unmap_and_free_lbuf(adapter, &rx_desc, RX);
 	*work_done = 1;
 }
 
