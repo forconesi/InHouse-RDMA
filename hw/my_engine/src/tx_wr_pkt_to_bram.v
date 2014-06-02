@@ -77,6 +77,7 @@ module tx_wr_pkt_to_bram (
     // Local current_huge_page_addr
     //-------------------------------------------------------
     reg     [63:0]  current_huge_page_addr;
+    reg     [31:0]  current_huge_page_qwords;
     reg     [14:0]  give_huge_page_fsm;
     reg     [14:0]  free_huge_page_fsm;
     reg             huge_page_available;
@@ -102,11 +103,15 @@ module tx_wr_pkt_to_bram (
     // Local completion_tlp & write to bram (wr_to_bram_fsm)
     //-------------------------------------------------------
     reg     [14:0]  wr_to_bram_fsm;
-    reg             receiving_completion;
     reg             wr_addr_updated_internal;
     reg     [8:0]   qwords_on_tlp;
     reg     [31:0]  aux;
     reg     [`BF:0] look_ahead_wr_addr;
+    reg     [14:0]  wr_control_fsm;
+    reg     [31:0]  qwords_to_write;
+    reg     [31:0]  qwords_written;
+    reg     [31:0]  look_ahead_qwords_written;
+    reg             received_huge_page_finished;
     
     assign reset_n = ~trn_lnk_up_n;
 
@@ -179,6 +184,7 @@ module tx_wr_pkt_to_bram (
                     if (huge_page_status_1) begin
                         huge_page_available <= 1'b1;
                         current_huge_page_addr <= huge_page_addr_1;
+                        current_huge_page_qwords <= huge_page_qwords_1;
                         give_huge_page_fsm <= s1;
                     end
                 end
@@ -194,6 +200,7 @@ module tx_wr_pkt_to_bram (
                     if (huge_page_status_2) begin
                         huge_page_available <= 1'b1;
                         current_huge_page_addr <= huge_page_addr_2;
+                        current_huge_page_qwords <= huge_page_qwords_2;
                         give_huge_page_fsm <= s3;
                     end
                 end
@@ -226,6 +233,7 @@ module tx_wr_pkt_to_bram (
 
             return_huge_page_to_host <= 1'b0;
             diff <= next_wr_addr + (~commited_rd_address_reg1) + 1;
+            remaining_qwords_to_rd <= current_huge_page_qwords + (~huge_page_qwords_counter) + 1;
 
             case (trigger_rd_tlp_fsm)
 
@@ -258,7 +266,7 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s3 : begin
-                    if (huge_page_qwords_counter < huge_page_qwords_1) begin
+                    if (huge_page_qwords_counter < current_huge_page_qwords) begin
                         trigger_rd_tlp_fsm <= s1;
                     end
                     else begin
@@ -312,19 +320,22 @@ module tx_wr_pkt_to_bram (
     always @( posedge trn_clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
-            receiving_completion <= 1'b0;
             wr_addr <= 'b0;
+            look_ahead_wr_addr <= 'b0;
             commited_wr_addr <= 'b0;
+            qwords_written <= 'b0;
+            look_ahead_qwords_written <= 'b0;
+            received_huge_page_finished <= 1'b0;
             wr_en <= 1'b1;
             wr_to_bram_fsm <= s0;
-            look_ahead_wr_addr <= 'b0;
+            wr_control_fsm <= s0;
         end
         
         else begin  // not reset
 
-            receiving_completion <= 1'b0;
             wr_addr_updated_internal <= 1'b0;
             wr_en <= 1'b1;
+            received_huge_page_finished <= 1'b0;
 
             case (wr_to_bram_fsm)
 
@@ -334,13 +345,13 @@ module tx_wr_pkt_to_bram (
                     commited_wr_addr <= look_ahead_wr_addr;
                     if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n)) begin
                         if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] == `SC) ) begin
-                            receiving_completion <= 1'b1;
                             wr_to_bram_fsm <= s1;
                         end
                     end
                 end
 
                 s1 : begin
+                    look_ahead_qwords_written <= qwords_written + 'h1;
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
                         aux <= trn_rd[31:0];
                         wr_to_bram_fsm <= s2;
@@ -349,7 +360,15 @@ module tx_wr_pkt_to_bram (
 
                 s2 : begin
                     wr_data <= {trn_rd[39:32], trn_rd[47:40], trn_rd[55:48], trn_rd[63:56], aux[7:0], aux[15:8], aux[23:16], aux[31:24]};
-                    if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
+                    if (look_ahead_qwords_written == qwords_to_write) begin // end of huge page
+                        qwords_written <= 'b0;
+                        look_ahead_qwords_written <= 'b0;
+                        received_huge_page_finished <= 1'b1;
+                        wr_to_bram_fsm <= s0;
+                    end
+                    else if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
+                        qwords_written <= look_ahead_qwords_written;
+                        look_ahead_qwords_written <= look_ahead_qwords_written + 'h1;
                         look_ahead_wr_addr <= look_ahead_wr_addr +1;
                         wr_addr <= look_ahead_wr_addr;
                         aux <= trn_rd[31:0];
@@ -361,6 +380,27 @@ module tx_wr_pkt_to_bram (
 
                 default : begin //other TLPs
                     wr_to_bram_fsm <= s0;
+                end
+
+            endcase
+
+            case (wr_control_fsm)
+
+                s0 : begin
+                    if (huge_page_available) begin
+                        qwords_to_write <= current_huge_page_qwords;
+                        wr_control_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    if (received_huge_page_finished) begin
+                        wr_control_fsm <= s0;
+                    end
+                end
+
+                default : begin
+                    wr_control_fsm <= s0;
                 end
 
             endcase
