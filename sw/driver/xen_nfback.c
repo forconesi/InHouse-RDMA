@@ -1,3 +1,14 @@
+/*
+ * Integrated netback in NetFPGA nic driver
+ * - Most codes are brought from Linux drivers/net/xen-netback/
+ * - Make sure original netback needs to be unloaded before loading this module.
+ * - Differences:
+ *   1) vif is no more associated with netdev.
+ *   2) packet handling to/from netfront doesn't rely on skb.
+ *      so, xenvif_rx_action doesn't rely on skb.
+ * - TODO:
+ *   see several FIXME, #if 0, pr_debug...
+ */
 #include <xen/xenbus.h>
 #include <xen/events.h>			/* evtchn */
 #include <xen/interface/io/netif.h>	/* ring and gnttab */
