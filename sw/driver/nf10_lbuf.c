@@ -446,9 +446,10 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	if (1) {
 		unsigned long size = LBUF_SIZE;
 		unsigned long unit = size >> 3;	/* divided by 8, so 256K at a time */
+		void *kern_addr = rx_desc.kern_addr;
 		while (size > 0 &&
-		       xenvif_rx_action(1, rx_desc.kern_addr, unit) == 0) {
-			rx_desc.kern_addr += unit;
+		       xenvif_rx_action(1, kern_addr, unit) == 0) {
+			kern_addr += unit;
 			size -= unit;
 		}
 		*work_done = 1;
