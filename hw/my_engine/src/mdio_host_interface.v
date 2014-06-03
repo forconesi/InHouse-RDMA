@@ -157,24 +157,6 @@ module mdio_host_interface (
                     host_wr_data[29] <= 1'b0;               // In-band FCS Enable
                     host_wr_data[30] <= 1'b0;               // Jumbo Frame Enable
                     host_wr_data[31] <= 1'b0;               // Transmitter Reset
-                    host_int_fsm <= s2;
-                end
-
-                s2 : begin
-                    host_opcode <= 2'b11;
-                    host_addr <= 10'b0;
-                    host_wr_data <= 32'b0;
-                    host_miim_sel <= 1'b0;
-                    host_req <= 1'b0;
-                    host_int_fsm <= s3;
-                end
-
-                s3 : begin                                  // Management Configuration Word
-                    host_opcode[1] <= 2'b0x;
-                    host_addr <= 10'h340;
-                    host_wr_data[4:0] <= 5'h09;             // Clock Divide
-                    host_wr_data[5] <= 1'b1;                // MDIO Enable
-                    host_miim_sel <= 1'b0;
                     host_int_fsm <= s4;
                 end
 
@@ -187,33 +169,51 @@ module mdio_host_interface (
                     host_int_fsm <= s5;
                 end
 
-                s5 : begin                                              // wait host configuration
-                    host_miim_sel <= 1'b1;
-                    generate_interrupt_50mhz <= 1'b0;
-                    if (mdio_access_reg) begin
-                        host_int_fsm <= s6;
-                    end
+                s5 : begin                                  // Management Configuration Word
+                    host_opcode[1] <= 2'b0x;
+                    host_addr <= 10'h340;
+                    host_wr_data[4:0] <= 5'h09;             // Clock Divide
+                    host_wr_data[5] <= 1'b1;                // MDIO Enable
+                    host_miim_sel <= 1'b0;
+                    host_int_fsm <= s6;
                 end
 
                 s6 : begin
+                    host_opcode <= 2'b11;
+                    host_addr <= 10'b0;
+                    host_wr_data <= 32'b0;
+                    host_miim_sel <= 1'b0;
+                    host_req <= 1'b0;
+                    host_int_fsm <= s7;
+                end
+
+                s7 : begin                                              // wait host configuration
+                    host_miim_sel <= 1'b1;
+                    generate_interrupt_50mhz <= 1'b0;
+                    if (mdio_access_reg) begin
+                        host_int_fsm <= s8;
+                    end
+                end
+
+                s8 : begin
                     if (host_miim_rdy) begin
                         host_opcode <= host_data_in_reg[27:26];
                         host_addr <= host_data_in_reg[25:16];
                         host_wr_data[15:0] <= host_data_in_reg[15:0];
                         host_req <= 1'b1;
-                        host_int_fsm <= s7;
+                        host_int_fsm <= s9;
                     end
                 end
 
-                s7 : begin
+                s9 : begin
                     host_req <= 1'b0;
-                    host_int_fsm <= s8;
+                    host_int_fsm <= s10;
                 end
 
-                s8 : begin
+                s10 : begin
                     if (host_miim_rdy) begin
                         generate_interrupt_50mhz <= 1'b1;
-                        host_int_fsm <= s5;
+                        host_int_fsm <= s7;
                     end
                 end
 

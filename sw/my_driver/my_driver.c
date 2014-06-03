@@ -298,7 +298,7 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     //first dw reserved
     huge_page_address[0] = 0;
     //length
-    huge_page_address[1] = 0x46;
+    huge_page_address[1] = 0x42;
     //payload
     huge_page_address[2] = 0xe04a1e00;
     huge_page_address[3] = 0x78100052;
@@ -318,10 +318,14 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     huge_page_address[17] = 0xcc303b43;
     huge_page_address[18] = 0xffff37a3;
 
+    huge_page_address[19] = 0xcacacaca;
+    huge_page_address[20] = 0;
+    huge_page_address[21] = -1;
+
     // send the address of the "full" huge page to the board
     *(((u64 *)my_drv_data->bar2) + 5) = my_drv_data->huge_page1_dma_addr;
     // send to the board the number of qwords written to the huge page
-    *(((u32 *)my_drv_data->bar2) + 11) = 9;        // 18
+    *(((u32 *)my_drv_data->bar2) + 11) = 10;
 
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: my_pcie_probe finished\n");
