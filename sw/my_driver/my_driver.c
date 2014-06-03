@@ -295,12 +295,10 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     u32 *huge_page_address;
     huge_page_address = (u32 *)my_drv_data->huge_page_kern_address1;
 
-    //first dw reserved
-    huge_page_address[0] = 0;
-    //length
-    huge_page_address[1] = 0x42;
-    //payload
-    huge_page_address[2] = 0xe04a1e00;
+    // Packet 1 start 
+    huge_page_address[0] = 0;   //first dw reserved
+    huge_page_address[1] = 0x42;    //length
+    huge_page_address[2] = 0xe04a1e00;//payload
     huge_page_address[3] = 0x78100052;
     huge_page_address[4] = 0xfb2bebd2;
     huge_page_address[5] = 0x00450008;
@@ -317,15 +315,44 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     huge_page_address[16] = 0xfa020a08;
     huge_page_address[17] = 0xcc303b43;
     huge_page_address[18] = 0xffff37a3;
+    huge_page_address[19] = 0xcacacaca;//payload finishes in even number of dwords 
+    // Packet 2 start
+    /*
+    as displayed in wireshark 74 bytes long
+    000ffeca a5e5001e  4ae05200 08004500
+    003c33fa 40002e06  7173d05d 07bc96f4
+    3841d53c 2df8b249  79f10000 0000a002
+    05b45312 00000204  05b40402 080a7c6c
+    9c0e0000 00000103  0307
+    */
+    huge_page_address[20] = 0;   //first dw reserved
+    huge_page_address[21] = 0x4A;    //length
+    huge_page_address[22] = cpu_to_be32(0x000ffeca);//payload
+    huge_page_address[23] = cpu_to_be32(0xa5e5001e);
+    huge_page_address[24] = cpu_to_be32(0x4ae05200);
+    huge_page_address[25] = cpu_to_be32(0x08004500);
+    huge_page_address[26] = cpu_to_be32(0x003c33fa);
+    huge_page_address[27] = cpu_to_be32(0x40002e06);
+    huge_page_address[28] = cpu_to_be32(0x7173d05d);
+    huge_page_address[29] = cpu_to_be32(0x07bc96f4);
+    huge_page_address[30] = cpu_to_be32(0x3841d53c);
+    huge_page_address[31] = cpu_to_be32(0x2df8b249);
+    huge_page_address[32] = cpu_to_be32(0x79f10000);
+    huge_page_address[33] = cpu_to_be32(0x0000a002);
+    huge_page_address[34] = cpu_to_be32(0x05b45312);
+    huge_page_address[35] = cpu_to_be32(0x00000204);
+    huge_page_address[36] = cpu_to_be32(0x05b40402);
+    huge_page_address[37] = cpu_to_be32(0x080a7c6c);
+    huge_page_address[38] = cpu_to_be32(0x9c0e0000);
+    huge_page_address[39] = cpu_to_be32(0x00000103);
+    huge_page_address[40] = 0xcaca0703;
+    huge_page_address[41] = 0xbeefbeef;//payload finishes in even number of dwords 
 
-    huge_page_address[19] = 0xcacacaca;
-    huge_page_address[20] = 0;
-    huge_page_address[21] = -1;
 
     // send the address of the "full" huge page to the board
     *(((u64 *)my_drv_data->bar2) + 5) = my_drv_data->huge_page1_dma_addr;
     // send to the board the number of qwords written to the huge page
-    *(((u32 *)my_drv_data->bar2) + 11) = 10;
+    *(((u32 *)my_drv_data->bar2) + 11) = 21;
 
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: my_pcie_probe finished\n");
