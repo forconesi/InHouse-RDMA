@@ -202,10 +202,13 @@ module  pci_exp_64b_app (
     //-------------------------------------------------------
     // Local tx_wr_pkt_to_bram_mod
     //-------------------------------------------------------
+    wire   [63:0]     tx_completed_buffer_address;
     wire   [63:0]     tx_huge_page_addr_read_from;
     wire              tx_read_chunk;
     wire   [8:0]      tx_qwords_to_rd;
     wire              tx_read_chunk_ack;
+    wire              tx_send_huge_page_rd_completed;
+    wire              tx_send_huge_page_rd_completed_ack;
 
     //////////////////////////////////////////////////////////////////////////////////////////
     // PCIe Endpoint Arbitrations
@@ -373,7 +376,8 @@ module  pci_exp_64b_app (
         .huge_page_status_1 ( tx_huge_page_status_1 ),  // O
         .huge_page_status_2 ( tx_huge_page_status_2 ),  // O
         .huge_page_free_1 ( tx_huge_page_free_1 ),  // I
-        .huge_page_free_2 ( tx_huge_page_free_2 )   // I
+        .huge_page_free_2 ( tx_huge_page_free_2 ),  // I
+        .completed_buffer_address ( tx_completed_buffer_address )   // O [63:0]
         );
 
     tx_rd_host_mem tx_rd_host_mem_mod (
@@ -391,10 +395,13 @@ module  pci_exp_64b_app (
         .cfg_interrupt_n ( tx_cfg_interrupt_n ),       // O
         .cfg_interrupt_rdy_n ( cfg_interrupt_rdy_n ),  // I
 
+        .completed_buffer_address ( tx_completed_buffer_address ),  // I [63:0]
         .huge_page_addr ( tx_huge_page_addr_read_from ),     // I [63:0]
         .read_chunk ( tx_read_chunk ), // I
         .qwords_to_rd ( tx_qwords_to_rd ),  // I [8:0]
         .read_chunk_ack ( tx_read_chunk_ack ), // O
+        .send_huge_page_rd_completed ( tx_send_huge_page_rd_completed ),  // I
+        .send_huge_page_rd_completed_ack ( tx_send_huge_page_rd_completed_ack ),  // O
         .my_turn ( tx_turn ),     // I
         .driving_interface ( tx_driven )      // O
         );
@@ -422,6 +429,8 @@ module  pci_exp_64b_app (
         .read_chunk ( tx_read_chunk ),              // O
         .qwords_to_rd ( tx_qwords_to_rd ),          // O [8:0]
         .read_chunk_ack ( tx_read_chunk_ack ),      // I
+        .send_huge_page_rd_completed ( tx_send_huge_page_rd_completed ), // O
+        .send_huge_page_rd_completed_ack ( tx_send_huge_page_rd_completed_ack ), // I
         .wr_addr ( tx_wr_addr ),                    // O [`BF:0]
         .wr_data ( tx_wr_data ),                    // O [63:0]
         .wr_en ( tx_wr_en ),                        // O

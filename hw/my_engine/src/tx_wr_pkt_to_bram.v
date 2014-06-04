@@ -34,6 +34,8 @@ module tx_wr_pkt_to_bram (
     output reg              read_chunk,
     output reg   [8:0]      qwords_to_rd,
     input                   read_chunk_ack,
+    output reg              send_huge_page_rd_completed,
+    input                   send_huge_page_rd_completed_ack,
 
     // Internal memory driver
     output reg  [`BF:0]     wr_addr,
@@ -220,6 +222,7 @@ module tx_wr_pkt_to_bram (
         if (!reset_n ) begin  // reset
             return_huge_page_to_host <= 1'b0;
             read_chunk <= 1'b0;
+            send_huge_page_rd_completed <= 1'b0;
             diff <= 'b0;
             next_wr_addr <= 'b0;
             trigger_rd_tlp_fsm <= s0;
@@ -267,12 +270,16 @@ module tx_wr_pkt_to_bram (
                     end
                     else begin
                         return_huge_page_to_host <= 1'b1;
+                        send_huge_page_rd_completed <= 1'b1;
                         trigger_rd_tlp_fsm <= s4;
                     end
                 end
 
                 s4 : begin
-                    trigger_rd_tlp_fsm <= s0;          // dummy wait
+                    if (send_huge_page_rd_completed_ack) begin
+                        send_huge_page_rd_completed <= 1'b0;
+                        trigger_rd_tlp_fsm <= s0;
+                    end
                 end
 
                 default : begin

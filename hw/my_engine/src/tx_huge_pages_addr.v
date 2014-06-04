@@ -29,7 +29,8 @@ module tx_huge_pages_addr (
     output reg              huge_page_status_1,
     output reg              huge_page_status_2,
     input                   huge_page_free_1,
-    input                   huge_page_free_2
+    input                   huge_page_free_2,
+    output reg  [63:0]      completed_buffer_address
     );
 
     // localparam
@@ -37,6 +38,7 @@ module tx_huge_pages_addr (
     localparam s1 = 8'b00000001;
     localparam s2 = 8'b00000010;
     localparam s3 = 8'b00000100;
+    localparam s4 = 8'b00001000;
 
     // Local wires and reg
     wire            reset_n = ~trn_lnk_up_n;
@@ -73,10 +75,11 @@ module tx_huge_pages_addr (
         if (!reset_n ) begin  // reset
             huge_page_unlock_1 <= 1'b0;
             huge_page_unlock_2 <= 1'b0;
-            huge_page_addr_1 <= 64'b0;
-            huge_page_addr_2 <= 64'b0;
-            huge_page_qwords_1 <= 32'b0;
-            huge_page_qwords_2 <= 32'b0;
+            //huge_page_addr_1 <= 64'b0;
+            //huge_page_addr_2 <= 64'b0;
+            //huge_page_qwords_1 <= 32'b0;
+            //huge_page_qwords_2 <= 32'b0;
+            //completed_buffer_address <= 64'b0;
             state <= s0;
         end
         
@@ -131,6 +134,14 @@ module tx_huge_pages_addr (
                                 state <= s0;
                             end
 
+                            4'b1000 : begin     // huge page address
+                                completed_buffer_address[7:0] <= trn_rd[31:24];
+                                completed_buffer_address[15:8] <= trn_rd[23:16];
+                                completed_buffer_address[23:16] <= trn_rd[15:8];
+                                completed_buffer_address[31:24] <= trn_rd[7:0];
+                                state <= s4;
+                            end
+
                             default : begin //other addresses
                                 state <= s0;
                             end
@@ -155,6 +166,16 @@ module tx_huge_pages_addr (
                         huge_page_addr_2[47:40] <= trn_rd[55:48];
                         huge_page_addr_2[55:48] <= trn_rd[47:40];
                         huge_page_addr_2[63:56] <= trn_rd[39:32];
+                        state <= s0;
+                    end
+                end
+
+                s4 : begin
+                    if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
+                        completed_buffer_address[39:32] <= trn_rd[63:56];
+                        completed_buffer_address[47:40] <= trn_rd[55:48];
+                        completed_buffer_address[55:48] <= trn_rd[47:40];
+                        completed_buffer_address[63:56] <= trn_rd[39:32];
                         state <= s0;
                     end
                 end
