@@ -20,7 +20,7 @@ module tx_rd_host_mem (
     input                  trn_tdst_rdy_n,
     input       [3:0]      trn_tbuf_av,
     input       [15:0]     cfg_completer_id,
-    output                 cfg_interrupt_n,
+    output reg             cfg_interrupt_n,
     input                  cfg_interrupt_rdy_n,
 
     // Internal logic
@@ -33,6 +33,9 @@ module tx_rd_host_mem (
     output reg             read_chunk_ack,
     input                  send_huge_page_rd_completed,
     output reg             send_huge_page_rd_completed_ack,
+
+    input                  send_interrupt,
+    output reg             send_interrupt_ack,
 
     // Arbitrations hanshake
 
@@ -72,7 +75,7 @@ module tx_rd_host_mem (
     reg     [31:0]  next_huge_page_index;
 
     assign reset_n = ~trn_lnk_up_n;
-    assign cfg_interrupt_n = 1'b1;
+    
 
     ////////////////////////////////////////////////
     // read request TLP generation to huge_page
@@ -85,11 +88,13 @@ module tx_rd_host_mem (
             trn_tsof_n <= 1'b1;
             trn_teof_n <= 1'b1;
             trn_tsrc_rdy_n <= 1'b1;
+            cfg_interrupt_n <= 1'b1;
             tlp_number <= 32'b0;
 
             read_chunk_ack <= 1'b0;
             send_huge_page_rd_completed_ack <= 1'b0;
             huge_page_index <= 'b0;
+            send_interrupt_ack <= 1'b0;
 
             driving_interface <= 1'b0;
             state <= s0;
@@ -99,6 +104,7 @@ module tx_rd_host_mem (
 
             read_chunk_ack <= 1'b0;
             send_huge_page_rd_completed_ack <= 1'b0;
+            send_interrupt_ack <= 1'b0;
 
             case (state)
 
@@ -106,16 +112,24 @@ module tx_rd_host_mem (
                     next_completed_buffer_address <= completed_buffer_address + {huge_page_index, 2'b00};
                     driving_interface <= 1'b0;
                     host_mem_addr <= huge_page_addr;
-                    if ( (trn_tbuf_av[0]) && (!trn_tdst_rdy_n) && (my_turn) ) begin          // credits available and endpointready and myturn
-                        if (read_chunk) begin
+                    if (my_turn) begin
+                        if (send_interrupt) begin
+                            cfg_interrupt_n <= 1'b0;
                             driving_interface <= 1'b1;
-                            read_chunk_ack <= 1'b1;
-                            state <= s1;
+                            send_interrupt_ack <= 1'b1;
+                            state <= s8;
                         end
-                        else if (send_huge_page_rd_completed) begin
-                            driving_interface <= 1'b1;
-                            send_huge_page_rd_completed_ack <= 1'b1;
-                            state <= s4;
+                        else if ( (trn_tbuf_av[0]) && (!trn_tdst_rdy_n) ) begin          // credits available and endpointready and myturn
+                            if (read_chunk) begin
+                                driving_interface <= 1'b1;
+                                read_chunk_ack <= 1'b1;
+                                state <= s1;
+                            end
+                            else if (send_huge_page_rd_completed) begin
+                                driving_interface <= 1'b1;
+                                send_huge_page_rd_completed_ack <= 1'b1;
+                                state <= s4;
+                            end
                         end
                     end
                 end
@@ -219,6 +233,14 @@ module tx_rd_host_mem (
                         trn_teof_n <= 1'b1;
                         trn_trem_n <= 8'hFF;
                         trn_td <= 64'b0;
+                        driving_interface <= 1'b0;
+                        state <= s0;
+                    end
+                end
+
+                s8 : begin
+                    if (!cfg_interrupt_rdy_n) begin
+                        cfg_interrupt_n <= 1'b1;
                         driving_interface <= 1'b0;
                         state <= s0;
                     end

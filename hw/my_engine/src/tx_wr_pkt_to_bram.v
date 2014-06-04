@@ -29,6 +29,7 @@ module tx_wr_pkt_to_bram (
     input                   huge_page_status_2,
     output reg              huge_page_free_1,
     output reg              huge_page_free_2,
+    input                   interrupts_enabled,
 
     output reg   [63:0]     huge_page_addr_read_from,
     output reg              read_chunk,
@@ -36,6 +37,9 @@ module tx_wr_pkt_to_bram (
     input                   read_chunk_ack,
     output reg              send_huge_page_rd_completed,
     input                   send_huge_page_rd_completed_ack,
+    
+    output reg              send_interrupt,
+    input                   send_interrupt_ack,
 
     // Internal memory driver
     output reg  [`BF:0]     wr_addr,
@@ -96,6 +100,13 @@ module tx_wr_pkt_to_bram (
     reg     [8:0]   huge_page_qwords_counter;                                   // the width can be less
     reg     [63:0]  look_ahead_huge_page_addr_read_from;
     reg     [31:0]  remaining_qwords;
+    
+    //-------------------------------------------------------
+    // Local trigger_interrupts
+    //-------------------------------------------------------
+    reg     [14:0]  trigger_interrupts_fsm;
+    reg     [9:0]   commulative_rd_data;
+    reg     [9:0]   commulative_received_data;
 
     //-------------------------------------------------------
     // Local pulse generation for 156.25 MHz domain
@@ -108,6 +119,7 @@ module tx_wr_pkt_to_bram (
     reg     [14:0]  wr_to_bram_fsm;
     reg             wr_addr_updated_internal;
     reg     [8:0]   qwords_on_tlp;
+    reg             completion_received;
     reg     [31:0]  aux;
     reg     [`BF:0] look_ahead_wr_addr;
     
@@ -291,6 +303,57 @@ module tx_wr_pkt_to_bram (
     end  //always
 
     ////////////////////////////////////////////////
+    // trigger_interrupts
+    ////////////////////////////////////////////////
+    always @( posedge trn_clk or negedge reset_n ) begin
+
+        if (!reset_n ) begin  // reset
+            send_interrupt <= 1'b0;
+            commulative_rd_data <= 'b0;
+            commulative_received_data <= 'b0;
+            trigger_interrupts_fsm <= s0;
+        end
+        
+        else begin  // not reset
+
+            if (read_chunk && read_chunk_ack) begin
+                commulative_rd_data <= commulative_rd_data + qwords_to_rd;
+            end
+            if (completion_received) begin
+                commulative_received_data <= commulative_received_data + qwords_on_tlp;
+            end
+
+            case (trigger_interrupts_fsm)
+
+                s0 : begin
+                    if ( (commulative_rd_data != commulative_received_data) && (interrupts_enabled) ) begin
+                        trigger_interrupts_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    if (commulative_rd_data == commulative_received_data) begin
+                        send_interrupt <= 1'b1;
+                        trigger_interrupts_fsm <= s2;
+                    end
+                end
+
+                s2 : begin
+                    if (send_interrupt_ack) begin
+                        send_interrupt <= 1'b0;
+                        trigger_interrupts_fsm <= s0;
+                    end
+                end
+
+                default : begin
+                    trigger_interrupts_fsm <= s0;
+                end
+
+            endcase
+        end     // not reset
+    end  //always
+
+    ////////////////////////////////////////////////
     // pulse generation for 156.25 MHz domain   must be active for 3 clks in 250 MHz domain
     ////////////////////////////////////////////////
     always @( posedge trn_clk or negedge reset_n ) begin
@@ -326,6 +389,7 @@ module tx_wr_pkt_to_bram (
             wr_addr <= 'b0;
             look_ahead_wr_addr <= 'b0;
             commited_wr_addr <= 'b0;
+            completion_received <= 1'b0;
             wr_en <= 1'b1;
             wr_to_bram_fsm <= s0;
         end
@@ -335,6 +399,7 @@ module tx_wr_pkt_to_bram (
             wr_addr_updated_internal <= 1'b0;
             wr_addr <= look_ahead_wr_addr;
             wr_en <= 1'b1;
+            completion_received <= 1'b0;
 
             case (wr_to_bram_fsm)
 
@@ -362,6 +427,7 @@ module tx_wr_pkt_to_bram (
                         look_ahead_wr_addr <= look_ahead_wr_addr +1;
                         aux <= trn_rd[31:0];
                         if (!trn_reof_n) begin
+                            completion_received <= 1'b1;
                             wr_to_bram_fsm <= s0;
                         end
                     end

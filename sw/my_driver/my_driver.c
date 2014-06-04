@@ -129,17 +129,19 @@ irqreturn_t card_interrupt_handler(int irq, void *dev_id) {
     struct my_driver_host_data *my_drv_data = (struct my_driver_host_data *)pci_get_drvdata(pdev);
     int ret;
 
-    do {
-        ret = queue_work(my_drv_data->rx_wq, (struct work_struct *)&my_drv_data->rx_work);                            //Process Huge Page on kernel thread
-    } while (!ret);
+    //do {
+        //ret = queue_work(my_drv_data->rx_wq, (struct work_struct *)&my_drv_data->rx_work);                            //Process Huge Page on kernel thread
+    //} while (!ret);
 
     // if (!ret) {
     //     printk(KERN_INFO "busy\n");
     // }
-
+/*
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: Interruption received\n");
     #endif
+*/
+    printk(KERN_INFO "Myd: Tx interrupt received. huge paged consumed\n");
 
     return IRQ_HANDLED;
 }
@@ -292,6 +294,10 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 
     // Test Tx
     //allocate an out-of-band buffer where hw will write when a huge page was read entirely
+
+    // Enable tx interrupts from board
+    *(((u32 *)my_drv_data->bar2) + 9) = 0xcacabeef;
+
     my_drv_data->tx_completion_buffer_kern_address = pci_alloc_consistent(pdev, 2*4, &my_drv_data->tx_completion_buffer_dma_addr);    // number of huge pages by 1dw/huge page
     printk(KERN_INFO "Myd: tx_completion_buffer_dma_addr dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->tx_completion_buffer_dma_addr >> 32), (int)(u64)my_drv_data->tx_completion_buffer_dma_addr);
     *(((u64 *)my_drv_data->bar2) + 4) = (u64)my_drv_data->tx_completion_buffer_dma_addr;

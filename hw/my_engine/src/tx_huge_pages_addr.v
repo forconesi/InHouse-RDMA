@@ -30,6 +30,7 @@ module tx_huge_pages_addr (
     output reg              huge_page_status_2,
     input                   huge_page_free_1,
     input                   huge_page_free_2,
+    output reg              interrupts_enabled,
     output reg  [63:0]      completed_buffer_address
     );
 
@@ -75,6 +76,7 @@ module tx_huge_pages_addr (
         if (!reset_n ) begin  // reset
             huge_page_unlock_1 <= 1'b0;
             huge_page_unlock_2 <= 1'b0;
+            interrupts_enabled <= 1'b0;
             //huge_page_addr_1 <= 64'b0;
             //huge_page_addr_2 <= 64'b0;
             //huge_page_qwords_1 <= 32'b0;
@@ -134,12 +136,17 @@ module tx_huge_pages_addr (
                                 state <= s0;
                             end
 
-                            4'b1000 : begin     // huge page address
+                            4'b1000 : begin     // completion buffer address
                                 completed_buffer_address[7:0] <= trn_rd[31:24];
                                 completed_buffer_address[15:8] <= trn_rd[23:16];
                                 completed_buffer_address[23:16] <= trn_rd[15:8];
                                 completed_buffer_address[31:24] <= trn_rd[7:0];
                                 state <= s4;
+                            end
+
+                            4'b1001 : begin     // interrupts eneable and disable
+                                interrupts_enabled <= ~interrupts_enabled;
+                                state <= s0;
                             end
 
                             default : begin //other addresses
