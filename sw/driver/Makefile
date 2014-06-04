@@ -1,9 +1,9 @@
 obj-m += nf10.o
-nf10-objs += ael2005_simple_conf.o
+nf10-objs += ael2005_conf.o
 nf10-objs += nf10_main.o
 nf10-objs += nf10_lbuf.o
 nf10-objs += nf10_ethtool.o
-nf10-objs += nf10_fops.o
+nf10-objs += nf10_user.o
 ifeq ($(CONFIG_XEN_NF_BACKEND),y)
 nf10-objs += xen_nfback.o
 CONFIG_LBUF_COHERENT=y

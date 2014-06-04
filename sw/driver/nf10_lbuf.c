@@ -1,7 +1,7 @@
 #include <linux/etherdevice.h>
 #include "nf10.h"
 #include "nf10_lbuf.h"
-#include "nf10_fops.h"
+#include "nf10_user.h"
 
 #ifdef CONFIG_SKBPOOL
 #include "skbpool.h"

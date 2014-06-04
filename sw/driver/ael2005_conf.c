@@ -6,7 +6,7 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h> 
 #include "nf10.h"
-#include "ael2005_simple_conf.h"
+#include "ael2005_conf.h"
 
 irqreturn_t mdio_access_interrupt_handler(int irq, void *dev_id)
 {

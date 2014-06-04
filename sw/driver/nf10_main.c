@@ -8,7 +8,7 @@
 #include <linux/interrupt.h>
 
 #include "nf10.h"
-#include "nf10_fops.h"
+#include "nf10_user.h"
 
 u64 nf10_test_dev_addr = 0x000f530dd165;
 

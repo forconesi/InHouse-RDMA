@@ -1,5 +1,5 @@
 #include "nf10.h"
-#include "nf10_fops.h"
+#include "nf10_user.h"
 
 static dev_t devno;
 static struct class *dev_class;

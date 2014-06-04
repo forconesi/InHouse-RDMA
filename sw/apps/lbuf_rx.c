@@ -8,7 +8,7 @@
 #include <signal.h>
 
 #include "nf10_lbuf.h"
-#include "nf10_fops.h"
+#include "nf10_user.h"
 
 #define LBUF_SIZE	(2*1024*1024)
 #define DEV_FNAME	"/dev/" NF10_DRV_NAME
