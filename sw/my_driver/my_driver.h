@@ -34,6 +34,9 @@ struct my_driver_host_data {
     u64 huge_page1_dma_addr;
     u64 huge_page2_dma_addr;
 
+    dma_addr_t tx_completion_buffer_dma_addr;
+    void *tx_completion_buffer_kern_address;
+
     void *huge_page_kern_address1;
     void *huge_page_kern_address2;
 

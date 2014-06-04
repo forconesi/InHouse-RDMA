@@ -278,7 +278,7 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     ret = my_linux_network_interface(my_drv_data);
     if (ret) {printk(KERN_ERR "Myd: my_linux_network_interface\n"); goto err_11;}
 
-    // Ready to start operation
+    // Ready to rx start operation
 
     // Send Memory Write Request TLPs with huge pages' address
     //*(((u32 *)my_drv_data->bar2) + 2) = my_drv_data->huge_page1_dma_addr;
@@ -291,13 +291,17 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     my_drv_data->huge_page_index = 1;
 
     // Test Tx
+    //allocate an out-of-band buffer where hw will write when a huge page was read entirely
+    my_drv_data->tx_completion_buffer_kern_address = pci_alloc_consistent(pdev, 2*4, &my_drv_data->tx_completion_buffer_dma_addr);    // number of huge pages by 1dw/huge page
+    printk(KERN_INFO "Myd: tx_completion_buffer_dma_addr dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->tx_completion_buffer_dma_addr >> 32), (int)(u64)my_drv_data->tx_completion_buffer_dma_addr);
+    *(((u64 *)my_drv_data->bar2) + 4) = (u64)my_drv_data->tx_completion_buffer_dma_addr;
     // I will use the page 1 for the experiment
     u32 *huge_page_address;
     huge_page_address = (u32 *)my_drv_data->huge_page_kern_address1;
 
     // Packet 1 start 
     huge_page_address[0] = 0;   //first dw reserved
-    huge_page_address[1] = 0x42;    //length
+    huge_page_address[1] = 0x00000042;    //length
     huge_page_address[2] = 0xe04a1e00;//payload
     huge_page_address[3] = 0x78100052;
     huge_page_address[4] = 0xfb2bebd2;
@@ -326,7 +330,7 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     9c0e0000 00000103  0307
     */
     huge_page_address[20] = 0;   //first dw reserved
-    huge_page_address[21] = 0x4A;    //length
+    huge_page_address[21] = 0x0000004A;    //length
     huge_page_address[22] = cpu_to_be32(0x000ffeca);//payload
     huge_page_address[23] = cpu_to_be32(0xa5e5001e);
     huge_page_address[24] = cpu_to_be32(0x4ae05200);
@@ -349,10 +353,86 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     huge_page_address[41] = 0xbeefbeef;//payload finishes in even number of dwords 
 
 
-    // send the address of the "full" huge page to the board
+    // send the address of the filled huge page to the board
     *(((u64 *)my_drv_data->bar2) + 5) = my_drv_data->huge_page1_dma_addr;
     // send to the board the number of qwords written to the huge page
     *(((u32 *)my_drv_data->bar2) + 11) = 21;
+
+    // Change to another huge page
+    huge_page_address = (u32 *)my_drv_data->huge_page_kern_address2;
+
+/*
+    as displayed in wireshark 159 bytes long
+    ffffffff ffff001a  a0292942 08004500
+    00910000 40004011  6b0896f4 3860ffff
+    ffff445c 445c007d  33247b22 686f7374
+    5f696e74 223a2032  38393834 3732372c
+    20227665 7273696f  6e223a20 5b312c20
+    385d2c20 22646973  706c6179 6e616d65
+    223a2022 32383938  34373237 222c2022
+    706f7274 223a2031  37353030 2c20226e
+    616d6573 70616365  73223a20 5b363533
+    36333938 2c203631  32373135 315d7d   
+*/
+   // Packet 1 start 
+    huge_page_address[0] = 0;   //first dw reserved
+    huge_page_address[1] = 0x0000009F;    //length
+    huge_page_address[2] = cpu_to_be32(0xffffffff); 
+    huge_page_address[3] = cpu_to_be32(0xffff001a); 
+    huge_page_address[4] = cpu_to_be32(0xa0292942); 
+    huge_page_address[5] = cpu_to_be32(0x08004500); 
+    huge_page_address[6] = cpu_to_be32(0x00910000); 
+    huge_page_address[7] = cpu_to_be32(0x40004011); 
+    huge_page_address[8] = cpu_to_be32(0x6b0896f4); 
+    huge_page_address[9] = cpu_to_be32(0x3860ffff); 
+    huge_page_address[10] = cpu_to_be32(0xffff445c); 
+    huge_page_address[11] = cpu_to_be32(0x445c007d); 
+    huge_page_address[12] = cpu_to_be32(0x33247b22); 
+    huge_page_address[13] = cpu_to_be32(0x686f7374); 
+    huge_page_address[14] = cpu_to_be32(0x5f696e74); 
+    huge_page_address[15] = cpu_to_be32(0x223a2032); 
+    huge_page_address[16] = cpu_to_be32(0x38393834); 
+    huge_page_address[17] = cpu_to_be32(0x3732372c); 
+    huge_page_address[18] = cpu_to_be32(0x20227665); 
+    huge_page_address[19] = cpu_to_be32(0x7273696f); 
+    huge_page_address[20] = cpu_to_be32(0x6e223a20); 
+    huge_page_address[21] = cpu_to_be32(0x5b312c20); 
+    huge_page_address[22] = cpu_to_be32(0x385d2c20); 
+    huge_page_address[23] = cpu_to_be32(0x22646973); 
+    huge_page_address[24] = cpu_to_be32(0x706c6179); 
+    huge_page_address[25] = cpu_to_be32(0x6e616d65); 
+    huge_page_address[26] = cpu_to_be32(0x223a2022); 
+    huge_page_address[27] = cpu_to_be32(0x32383938); 
+    huge_page_address[28] = cpu_to_be32(0x34373237); 
+    huge_page_address[29] = cpu_to_be32(0x222c2022); 
+    huge_page_address[30] = cpu_to_be32(0x706f7274); 
+    huge_page_address[31] = cpu_to_be32(0x223a2031); 
+    huge_page_address[32] = cpu_to_be32(0x37353030); 
+    huge_page_address[33] = cpu_to_be32(0x2c20226e); 
+    huge_page_address[34] = cpu_to_be32(0x616d6573); 
+    huge_page_address[35] = cpu_to_be32(0x70616365); 
+    huge_page_address[36] = cpu_to_be32(0x73223a20); 
+    huge_page_address[37] = cpu_to_be32(0x5b363533); 
+    huge_page_address[38] = cpu_to_be32(0x36333938); 
+    huge_page_address[39] = cpu_to_be32(0x2c203631); 
+    huge_page_address[40] = cpu_to_be32(0x32373135); 
+    huge_page_address[41] = cpu_to_be32(0x315d7d00); //payload finishes in even number of dwords 
+
+    // send the address of the filled huge page to the board
+    *(((u64 *)my_drv_data->bar2) + 6) = my_drv_data->huge_page2_dma_addr;
+    // send to the board the number of qwords written to the huge page
+    *(((u32 *)my_drv_data->bar2) + 13) = 21;
+
+
+    // check if huge page 1 is free. In this case we can reuse it or we can pass a new address instead
+    // in this case we reuse it
+    ssleep(5);
+    u32* temp;
+    temp = (u32 *)my_drv_data->tx_completion_buffer_kern_address;
+
+    if (temp[0] == 0xcacabeef) printk(KERN_INFO "Myd: huge page 1 free\n");
+
+    if (temp[1] == 0xcacabeef) printk(KERN_INFO "Myd: huge page 2 free\n");
 
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: my_pcie_probe finished\n");
