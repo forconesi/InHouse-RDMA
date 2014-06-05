@@ -9,8 +9,6 @@ static struct skbpool_entry skb_free_list;
 #endif
 
 struct desc {
-	/* FIXME: one of pages and kern_addrs may not be needed */
-	struct page	*page;
 	void		*kern_addr;
 	dma_addr_t	dma_addr;
 };
@@ -60,29 +58,30 @@ static struct lbuf_hw {
 
 static inline void *alloc_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 {
-	desc->kern_addr = NULL;
-#ifdef CONFIG_LBUF_COHERENT
+#ifndef CONFIG_LBUF_COHERENT
+	struct page *page;
+
+	page = alloc_pages(GFP_TRANSHUGE, LBUF_ORDER);
+	if (page)
+		desc->kern_addr = page_address(page);
+	else
+		desc->kern_addr = NULL;
+#else
 	/* NOTE that pci_alloc_consistent returns allocated pages that have
 	 * been zeroed, so taking longer time than normal allocation */
 	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
 					       &desc->dma_addr);
-	if (desc->kern_addr)
-		desc->page = virt_to_page(desc->kern_addr);
-#else
-	desc->page = alloc_pages(GFP_TRANSHUGE, LBUF_ORDER);
-	if (desc->page)
-		desc->kern_addr = page_address(desc->page);
 #endif
 	return desc->kern_addr;
 }
 
 static inline void free_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 {
-#ifdef CONFIG_LBUF_COHERENT
+#ifndef CONFIG_LBUF_COHERENT
+	__free_pages(virt_to_page(desc->kern_addr), LBUF_ORDER);
+#else
 	pci_free_consistent(adapter->pdev, LBUF_SIZE,
 			    desc->kern_addr, desc->dma_addr);
-#else
-	__free_pages(desc->page, LBUF_ORDER);
 #endif
 }
 
@@ -171,9 +170,8 @@ static int __nf10_lbuf_init_buffers(struct nf10_adapter *adapter, int rx)
 			break;
 		netif_info(adapter, probe, adapter->netdev,
 			   "%s lbuf[%d] allocated at kern_addr=%p/dma_addr=%p"
-			   " pfn=%lx (size=%lu bytes)\n", rx ? "RX" : "TX", i,
-			   desc->kern_addr, (void *)desc->dma_addr, 
-			   page_to_pfn(desc->page), LBUF_SIZE);
+			   " (size=%lu bytes)\n", rx ? "RX" : "TX", i,
+			   desc->kern_addr, (void *)desc->dma_addr, LBUF_SIZE);
 	}
 	
 
@@ -458,12 +456,15 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 					struct net_device *dev)
 {
 	/* TODO */
-	return NETDEV_TX_BUSY;
+	pr_debug("tx: len=%u\n", skb->len);
+	dev_kfree_skb_any(skb);
+	return NETDEV_TX_OK;
 }
 
 static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
 {
 	/* TODO */
+	pr_debug("tx: clean\n");
 	return 1;
 }
 

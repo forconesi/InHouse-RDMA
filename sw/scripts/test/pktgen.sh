@@ -1,15 +1,18 @@
 #!/bin/bash
 
-delay=0
-if [ $# -lt 2 ]; then
-	echo "Usage: $0 <netif> <packet size> [delay(=$delay)]"
+if [ "$count" = "" ]; then
+	count=1000000
+fi
+if [ "$delay" = "" ]; then
+	delay=0
+fi
+
+if [ $# -ne 2 ]; then
+	echo "Usage: [delay=$delay] [count=$count] $0 <netif> <packet size>"
 	exit
 fi
 netif=$1
 pkt_size=$2
-if [ $# -ge 3 ]; then
-	delay=$3
-fi
 
 function pgset() {
 	local result
@@ -46,9 +49,6 @@ PGDEV=/proc/net/pktgen/$netif
 if [ ! -e $PGDEV ]; then
 	echo "Error: pktgen might not be loaded or $netif is not up now!"
 	exit
-fi
-if [ "$count" = "" ]; then
-	count=1000000
 fi
 pgset "count $count"
 pgset "clone_skb 100000"
