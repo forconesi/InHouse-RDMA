@@ -137,7 +137,6 @@ module my_top (
     //-------------------------------------------------------
     // Local Wires  XAUI
     //-------------------------------------------------------
-
     wire                                              RST_IN;
     wire                                              dcm_for_xaui_locked_out;
     wire                                              clk_50_Mhz_for_xaui;
@@ -153,11 +152,11 @@ module my_top (
     wire                                              xaui_mgt_tx_ready;
     wire   [6:0]                                      xaui_configuration_vector;
     wire   [7:0]                                      xaui_status_vector;
+    wire                                              reset_n;
     
     //-------------------------------------------------------
     // Local Wires  MAC
     //-------------------------------------------------------
-
     wire                                              mac_tx_underrun;
     wire   [63:0]                                     mac_tx_data;
     wire   [7:0]                                      mac_tx_data_valid;
@@ -187,39 +186,38 @@ module my_top (
     wire                                              mac_mdio_out;
     wire                                              mac_mdio_tri;
 
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Reception side of the NIC signal declaration
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //-------------------------------------------------------
+    // Local Wires internal_true_dual_port_ram rx
+    //-------------------------------------------------------
+    wire   [`BF:0]                                    rx_wr_addr;
+    wire   [63:0]                                     rx_wr_data;
+    wire   [`BF:0]                                    rx_rd_addr;
+    wire   [63:0]                                     rx_rd_data;
+    wire                                              rx_wr_clk;
+    wire                                              rx_wr_en;
+    wire                                              rx_rd_clk;
+    wire   [63:0]                                     rx_qspo;
+    
+    //-------------------------------------------------------
+    // Local Wires rx_tlp_trigger
+    //-------------------------------------------------------
+    wire   [`BF:0]                                    rx_commited_wr_address;
+    wire   [`BF:0]                                    rx_commited_rd_address;
+    wire                                              rx_trigger_tlp_ack;
+    wire                                              rx_trigger_tlp;
+    wire                                              rx_change_huge_page_ack;
+    wire                                              rx_change_huge_page;
+    wire                                              rx_send_last_tlp_change_huge_page;
+    wire   [4:0]                                      rx_qwords_to_send;
 
     //-------------------------------------------------------
-    // Local Wires internal_true_dual_port_ram
+    // Local Wires rx_mac_interface
     //-------------------------------------------------------
-
-    wire   [`BF:0]                                    wr_addr;
-    wire   [63:0]                                     wr_data;
-    wire   [`BF:0]                                    rd_addr;
-    wire   [63:0]                                     rd_data;
-    wire                                              wr_clk;
-    wire                                              wr_en;
-    wire                                              rd_clk;
-    wire   [63:0]                                     qspo;
-    wire                                              reset_n;
-
-    //-------------------------------------------------------
-    // Local Wires tlp_trigger
-    //-------------------------------------------------------
-
-    wire   [`BF+1:0]                                  commited_wr_address;
-    wire   [`BF+1:0]                                  commited_rd_address;
-    wire                                              trigger_tlp_ack;
-    wire                                              trigger_tlp;
-    wire                                              change_huge_page_ack;
-    wire                                              change_huge_page;
-    wire                                              send_last_tlp_change_huge_page;
-    wire   [4:0]                                      qwords_to_send;
-
-    //-------------------------------------------------------
-    // Local Wires mac_rx_interface
-    //-------------------------------------------------------
-    wire   [`BF+1:0]                                  rd_addr_extended;
-    wire                                              rd_addr_change;
+    wire   [`BF:0]                                    rx_commited_rd_address_to_mac;
+    wire                                              rx_rd_addr_updated;
 
     //////////////////////////////////////////////////////////////////////////////////////////
     // Transmition side of the NIC signal declaration
@@ -229,20 +227,20 @@ module my_top (
     //-------------------------------------------------------
     wire   [`BF:0]                                    tx_wr_addr;
     wire   [63:0]                                     tx_wr_data;
-    (* KEEP = "TRUE" *)wire   [`BF:0]                                    tx_rd_addr;
-    (* KEEP = "TRUE" *)wire   [63:0]                                     tx_rd_data;
-    (* KEEP = "TRUE" *)wire                                              tx_wr_clk;
-    (* KEEP = "TRUE" *)wire                                              tx_wr_en;
-    (* KEEP = "TRUE" *)wire                                              tx_rd_clk;
-    (* KEEP = "TRUE" *)wire   [63:0]                                     tx_qspo;
+    wire   [`BF:0]                                    tx_rd_addr;
+    wire   [63:0]                                     tx_rd_data;
+    wire                                              tx_wr_clk;
+    wire                                              tx_wr_en;
+    wire                                              tx_rd_clk;
+    wire   [63:0]                                     tx_qspo;
 
     //-------------------------------------------------------
     // Local Wires tx_mac_interface tx
     //-------------------------------------------------------
-    (* KEEP = "TRUE" *)wire   [`BF:0]                                    tx_commited_rd_address;
-    (* KEEP = "TRUE" *)wire                                              tx_commited_rd_address_change;
-    (* KEEP = "TRUE" *)wire                                              tx_wr_addr_updated;
-                       wire   [`BF:0]                                    tx_commited_wr_addr;
+    wire   [`BF:0]                                    tx_commited_rd_address;
+    wire                                              tx_commited_rd_address_change;
+    wire                                              tx_wr_addr_updated;
+    wire   [`BF:0]                                    tx_commited_wr_addr;
 
     ////////////////////////////////////////////////
     // INSTRUMENTATION
@@ -299,8 +297,9 @@ module my_top (
     //-------------------------------------------------------
 
     assign xaui_reset = ~dcm_for_xaui_locked_out;
+    assign reset_n = ~xaui_reset;
 
-    xaui_v10_4_example_design my_xaui (
+    xaui_v10_4_example_design xaui_d (
         .dclk(clk_50_Mhz_for_xaui),        // I
         .reset(xaui_reset),                // I
         .clk156_out(xaui_clk_156_25_out),  // O
@@ -347,8 +346,7 @@ module my_top (
     //-------------------------------------------------------
     // MAC
     //-------------------------------------------------------
-
-    ten_gig_eth_mac_v10_3 my_mac (
+    ten_gig_eth_mac_v10_3 mac_d (
         .reset(xaui_reset),                 // I
 
         .tx_underrun(mac_tx_underrun),      // I 
@@ -432,64 +430,63 @@ module my_top (
     assign ael2005_mdio = mac_mdio_tri ? 1'bZ : mac_mdio_out;
     assign mac_mdio_in = mac_mdio_out;
 
-
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Reception side of the NIC (START)
+    //////////////////////////////////////////////////////////////////////////////////////////
     //-------------------------------------------------------
-    // internal_true_dual_port_ram
+    // internal_true_dual_port_ram rx
     //-------------------------------------------------------
-
-    dist_mem_gen_v7_2 my_bram (
-        .a(wr_addr),                // I [`BF:0]
-        .d(wr_data),                // I [63:0]
-        .dpra(rd_addr),             // I [`BF:0]
-        .clk(wr_clk),               // I 
-        .we(wr_en),                 // I
-        .qdpo_clk(rd_clk),          // I
-        .qspo(qspo),                // O [63:0]
-        .qdpo(rd_data)              // O [63:0]
+    rx_buffer rx_buffer_mod (
+        .a(rx_wr_addr),             // I [`BF:0]
+        .d(rx_wr_data),             // I [63:0]
+        .dpra(rx_rd_addr),          // I [`BF:0]
+        .clk(rx_wr_clk),            // I 
+        .we(rx_wr_en),              // I
+        .qdpo_clk(rx_rd_clk),       // I
+        .qspo(rx_qspo),             // O [63:0]
+        .qdpo(rx_rd_data)           // O [63:0]
         );  //see pg063
 
-    assign wr_clk = xaui_clk_156_25_out;  //156.25 MHz
-    assign rd_clk = trn_clk_c;            // 250 MHz
-    assign reset_n = ~xaui_reset;            
-
+    assign rx_wr_clk = xaui_clk_156_25_out;  //156.25 MHz
+    assign rx_rd_clk = trn_clk_c;            // 250 MHz
+    
     //-------------------------------------------------------
-    // tlp_trigger
+    // rx_tlp_trigger
     //-------------------------------------------------------
-
-    tlp_trigger my_tlp_trigger (
-        .clk156(wr_clk),                                        // I
+    rx_tlp_trigger rx_tlp_trigger_mod (
+        .clk156(xaui_clk_156_25_out),                           // I
         .reset_n(reset_n),                                      // I
-        .commited_wr_address(commited_wr_address),              // I [`BF+1:0]
-        .commited_rd_address(commited_rd_address),              // I [`BF+1:0]
-        .trigger_tlp_ack(trigger_tlp_ack),                      // I
-        .trigger_tlp(trigger_tlp),                              // O
-        .change_huge_page_ack(change_huge_page_ack),            // I
-        .change_huge_page(change_huge_page),                    // O
-        .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),        // O
-        .qwords_to_send(qwords_to_send)                         // O [4:0]
+        .commited_wr_address(rx_commited_wr_address),           // I [`BF:0]
+        .commited_rd_address(rx_commited_rd_address),              // I [`BF:0]
+        .trigger_tlp_ack(rx_trigger_tlp_ack),                      // I
+        .trigger_tlp(rx_trigger_tlp),                              // O
+        .change_huge_page_ack(rx_change_huge_page_ack),            // I
+        .change_huge_page(rx_change_huge_page),                    // O
+        .send_last_tlp_change_huge_page(rx_send_last_tlp_change_huge_page),        // O
+        .qwords_to_send(rx_qwords_to_send)                         // O [4:0]
         );
 
-    //assign commited_rd_address = (`BF+2)'b0;  // debug
-    //assign trigger_tlp_ack = 1'b0;  // debug
-
     //-------------------------------------------------------
-    // mac_rx_interface
+    // rx_mac_interface
     //-------------------------------------------------------
-
-    mac_rx_interface my_mac_rx_interface (
-        .clk(wr_clk),                       // I
+    rx_mac_interface rx_mac_interface_mod (
+        .clk(xaui_clk_156_25_out),             // I
         .reset_n(reset_n),                     // I
         .rx_data(mac_rx_data),                 // I [63:0]
         .rx_data_valid(mac_rx_data_valid),     // I [7:0]
         .rx_good_frame(mac_rx_good_frame),     // I
         .rx_bad_frame(mac_rx_bad_frame),       // I
-        .wr_addr(wr_addr),                     // O [`BF:0]
-        .wr_data(wr_data),                     // O [63:0]
-        .wr_en(wr_en),                         // O
-        .commited_wr_address(commited_wr_address),  // O [`BF+1:0]
-        .rd_addr_change(rd_addr_change),        // I
-        .rd_addr_extended(rd_addr_extended)    // I [`BF+1:0]
+        .wr_addr(rx_wr_addr),                  // O [`BF:0]
+        .wr_data(rx_wr_data),                  // O [63:0]
+        .wr_en(rx_wr_en),                      // O
+        .commited_wr_address(rx_commited_wr_address),  // O [`BF:0]
+        .rd_addr_updated(rx_rd_addr_updated),        // I
+        .commited_rd_address(rx_commited_rd_address_to_mac)    // I [`BF:0]
         );
+
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Reception side of the NIC (END)
+    //////////////////////////////////////////////////////////////////////////////////////////
 
     //////////////////////////////////////////////////////////////////////////////////////////
     // Transmition side of the NIC (START)
@@ -497,7 +494,7 @@ module my_top (
     //-------------------------------------------------------
     // internal_true_dual_port_ram tx
     //-------------------------------------------------------
-    tx_buffer my_tx_buffer (
+    tx_buffer tx_buffer_mod (
         .a(tx_wr_addr),                // I [`BF:0]
         .d(tx_wr_data),                // I [63:0]
         .dpra(tx_rd_addr),             // I [`BF:0]
@@ -560,21 +557,21 @@ module my_top (
         .trn_tbuf_av( trn_tbuf_av_c ),           // I [4/3:0]
 
         //-------------------------------------------------------
-        // To tlp_trigger
+        // To rx_tlp_trigger
         //-------------------------------------------------------
-        .trigger_tlp_ack(trigger_tlp_ack),                  // O
-        .trigger_tlp(trigger_tlp),                          // I
-        .change_huge_page_ack(change_huge_page_ack),        // O
-        .change_huge_page(change_huge_page),                // I
-        .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),        // I
-        .commited_rd_address(commited_rd_address),          // O [`BF+1:0]
-        .qwords_to_send(qwords_to_send),                    // I [4:0]
+        .rx_trigger_tlp_ack(rx_trigger_tlp_ack),                  // O
+        .rx_trigger_tlp(rx_trigger_tlp),                          // I
+        .rx_change_huge_page_ack(rx_change_huge_page_ack),        // O
+        .rx_change_huge_page(rx_change_huge_page),                // I
+        .rx_send_last_tlp_change_huge_page(rx_send_last_tlp_change_huge_page),        // I
+        .rx_commited_rd_address(rx_commited_rd_address),          // O [`BF:0]
+        .rx_qwords_to_send(rx_qwords_to_send),                    // I [4:0]
         
         //-------------------------------------------------------
-        // To mac_rx_interface
+        // To rx_mac_interface
         //-------------------------------------------------------
-        .rd_addr_change(rd_addr_change),                    // O
-        .rd_addr_extended(rd_addr_extended),                // O [`BF+1:0]
+        .rx_rd_addr_updated(rx_rd_addr_updated),                    // O
+        .rx_commited_rd_address_to_mac(rx_commited_rd_address_to_mac),                // O [`BF:0]
 
         //-------------------------------------------------------
         // To mac_host_configuration_interface
@@ -592,8 +589,8 @@ module my_top (
         //-------------------------------------------------------
         // To internal_true_dual_port_ram RX
         //-------------------------------------------------------
-        .rd_addr(rd_addr),                       // O [`BF:0]
-        .rd_data(rd_data),                       // I [63:0]
+        .rx_rd_addr(rx_rd_addr),                       // O [`BF:0]
+        .rx_rd_data(rx_rd_data),                       // I [63:0]
 
         //-------------------------------------------------------
         // To internal_true_dual_port_ram TX

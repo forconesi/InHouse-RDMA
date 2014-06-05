@@ -23,21 +23,21 @@ module  pci_exp_64b_app (
     input      [3:0]                              trn_tbuf_av,
 
     //-------------------------------------------------------
-    // To tlp_trigger
+    // To rx_tlp_trigger
     //-------------------------------------------------------
-    output                                        trigger_tlp_ack,
-    input                                         trigger_tlp,
-    output                                        change_huge_page_ack,
-    input                                         change_huge_page,
-    input                                         send_last_tlp_change_huge_page,
-    output     [`BF+1:0]                          commited_rd_address,
-    input      [4:0]                              qwords_to_send,
+    output                                        rx_trigger_tlp_ack,
+    input                                         rx_trigger_tlp,
+    output                                        rx_change_huge_page_ack,
+    input                                         rx_change_huge_page,
+    input                                         rx_send_last_tlp_change_huge_page,
+    output     [`BF:0]                            rx_commited_rd_address,
+    input      [4:0]                              rx_qwords_to_send,
 
     //-------------------------------------------------------
     // To mac_rx_interface
     //-------------------------------------------------------
-    output                                        rd_addr_change,
-    output     [`BF+1:0]                          rd_addr_extended,
+    output                                        rx_rd_addr_updated,
+    output     [`BF:0]                            rx_commited_rd_address_to_mac,
 
     //-------------------------------------------------------
     // To mac_host_configuration_interface
@@ -55,8 +55,8 @@ module  pci_exp_64b_app (
     //-------------------------------------------------------
     // To internal_true_dual_port_ram RX
     //-------------------------------------------------------
-    output     [`BF:0]                            rd_addr,
-    input      [63:0]                             rd_data,
+    output     [`BF:0]                            rx_rd_addr,
+    input      [63:0]                             rx_rd_data,
 
     //-------------------------------------------------------
     // To internal_true_dual_port_ram TX
@@ -154,13 +154,12 @@ module  pci_exp_64b_app (
     //-------------------------------------------------------
     // Local rx_huge_pages_addr_mod
     //-------------------------------------------------------
-
-    wire   [63:0]     huge_page_addr_1;
-    wire   [63:0]     huge_page_addr_2;
-    wire              huge_page_status_1;
-    wire              huge_page_status_2;
-    wire              huge_page_free_1;
-    wire              huge_page_free_2;
+    wire   [63:0]     rx_huge_page_addr_1;
+    wire   [63:0]     rx_huge_page_addr_2;
+    wire              rx_huge_page_status_1;
+    wire              rx_huge_page_status_2;
+    wire              rx_huge_page_free_1;
+    wire              rx_huge_page_free_2;
 
     wire   [63:0]     rx_trn_td;
     wire   [7:0]      rx_trn_trem_n;
@@ -298,7 +297,9 @@ module  pci_exp_64b_app (
         .host_miim_rdy ( host_miim_rdy )            // I
         );
 
-
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Reception side of the NIC (START)
+    //////////////////////////////////////////////////////////////////////////////////////////
     rx_huge_pages_addr rx_huge_pages_addr_mod (
         .trn_clk ( trn_clk ),                       // I
         .trn_lnk_up_n ( trn_lnk_up_n ),             // I
@@ -313,16 +314,16 @@ module  pci_exp_64b_app (
         .trn_rbar_hit_n ( trn_rbar_hit_n ),         // I [6:0]
         .trn_rdst_rdy_n ( trn_rdst_rdy_n ),         // I
 
-        .huge_page_addr_1 ( huge_page_addr_1 ),     // O [63:0]
-        .huge_page_addr_2 ( huge_page_addr_2 ),     // O [63:0]
-        .huge_page_status_1 ( huge_page_status_1 ), // O
-        .huge_page_status_2 ( huge_page_status_2 ), // O
-        .huge_page_free_1 ( huge_page_free_1 ),     // I
-        .huge_page_free_2 ( huge_page_free_2 )      // I
+        .huge_page_addr_1 ( rx_huge_page_addr_1 ),     // O [63:0]
+        .huge_page_addr_2 ( rx_huge_page_addr_2 ),     // O [63:0]
+        .huge_page_status_1 ( rx_huge_page_status_1 ), // O
+        .huge_page_status_2 ( rx_huge_page_status_2 ), // O
+        .huge_page_free_1 ( rx_huge_page_free_1 ),     // I
+        .huge_page_free_2 ( rx_huge_page_free_2 )      // I
 
         );
 
-    wr_rx_pkt_to_hugepages wr_rx_pkt_to_hugepages_mod (
+    rx_wr_pkt_to_hugepages rx_wr_pkt_to_hugepages_mod (
         .trn_clk ( trn_clk ),                       // I
         .trn_lnk_up_n ( trn_lnk_up_n ),             // I
 
@@ -337,27 +338,31 @@ module  pci_exp_64b_app (
         .cfg_interrupt_n ( rx_cfg_interrupt_n ),        // O
         .cfg_interrupt_rdy_n ( cfg_interrupt_rdy_n ),       // I
 
-        .huge_page_addr_1 ( huge_page_addr_1 ),     // I [63:0]
-        .huge_page_addr_2 ( huge_page_addr_2 ),     // I [63:0]
-        .huge_page_status_1 ( huge_page_status_1 ), // I
-        .huge_page_status_2 ( huge_page_status_2 ), // I
-        .huge_page_free_1 ( huge_page_free_1 ),     // O
-        .huge_page_free_2 ( huge_page_free_2 ),     // O
+        .huge_page_addr_1 ( rx_huge_page_addr_1 ),     // I [63:0]
+        .huge_page_addr_2 ( rx_huge_page_addr_2 ),     // I [63:0]
+        .huge_page_status_1 ( rx_huge_page_status_1 ), // I
+        .huge_page_status_2 ( rx_huge_page_status_2 ), // I
+        .huge_page_free_1 ( rx_huge_page_free_1 ),     // O
+        .huge_page_free_2 ( rx_huge_page_free_2 ),     // O
 
-        .trigger_tlp_ack(trigger_tlp_ack),          // O
-        .trigger_tlp(trigger_tlp),                  // I
-        .change_huge_page_ack(change_huge_page_ack),          // O
-        .change_huge_page(change_huge_page),                  // I
-        .send_last_tlp_change_huge_page(send_last_tlp_change_huge_page),    // I
-        .rd_addr(rd_addr),                          // O [`BF:0]
-        .rd_data(rd_data),                          // I [63:0]
-        .commited_rd_address(commited_rd_address),  // O [`BF+1:0]
-        .qwords_to_send(qwords_to_send),            // I [4:0]
-        .rd_addr_change(rd_addr_change),            // O 
-        .commited_rd_address_to_mac(rd_addr_extended),    // O [`BF+1:0]
+        .trigger_tlp_ack(rx_trigger_tlp_ack),          // O
+        .trigger_tlp(rx_trigger_tlp),                  // I
+        .change_huge_page_ack(rx_change_huge_page_ack),          // O
+        .change_huge_page(rx_change_huge_page),                  // I
+        .send_last_tlp_change_huge_page(rx_send_last_tlp_change_huge_page),    // I
+        .rd_addr(rx_rd_addr),                          // O [`BF:0]
+        .rd_data(rx_rd_data),                          // I [63:0]
+        .commited_rd_address(rx_commited_rd_address),  // O [`BF:0]
+        .qwords_to_send(rx_qwords_to_send),            // I [4:0]
+        .rd_addr_updated(rx_rd_addr_updated),            // O 
+        .commited_rd_address_to_mac(rx_commited_rd_address_to_mac),    // O [`BF:0]
         .my_turn ( rx_turn ),     // I
         .driving_interface ( rx_driven )      // O
         );
+
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Reception side of the NIC (END)
+    //////////////////////////////////////////////////////////////////////////////////////////
 
     //////////////////////////////////////////////////////////////////////////////////////////
     // Transmition side of the NIC (START)
