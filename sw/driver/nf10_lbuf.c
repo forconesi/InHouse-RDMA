@@ -11,12 +11,12 @@ static struct skbpool_entry skb_free_list;
 struct desc {
 	void		*kern_addr;
 	dma_addr_t	dma_addr;
+	struct sk_buff	*skb;
 };
 
 struct large_buffer {
 	struct desc descs[2][NR_LBUF];	/* 0=TX and 1=RX */
-	unsigned int tx_cons;
-	unsigned int rx_cons;
+	unsigned int cons[2];
 };
 
 static struct lbuf_hw {
@@ -72,6 +72,8 @@ static inline void *alloc_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
 					       &desc->dma_addr);
 #endif
+	desc->skb = NULL;
+
 	return desc->kern_addr;
 }
 
@@ -83,11 +85,14 @@ static inline void free_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 	pci_free_consistent(adapter->pdev, LBUF_SIZE,
 			    desc->kern_addr, desc->dma_addr);
 #endif
+	/* TODO: if skb is not NULL, release it safely */
 }
 
 static void unmap_and_free_lbuf(struct nf10_adapter *adapter,
 				struct desc *desc, int rx)
 {
+	if (unlikely(desc->kern_addr == NULL))
+		return;
 #ifndef CONFIG_LBUF_COHERENT	/* explicitly unmap to/from normal pages */
 	pci_unmap_single(adapter->pdev, desc->dma_addr, LBUF_SIZE,
 			 rx ? PCI_DMA_FROMDEVICE : PCI_DMA_TODEVICE);
@@ -117,13 +122,19 @@ static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
 	return 0;
 }
 
-static void inc_rx_cons(struct nf10_adapter *adapter)
+static void inc_cons(struct nf10_adapter *adapter, int rx)
 {
 	struct large_buffer *lbuf = get_lbuf();
 
-	lbuf->rx_cons++;
-	if (lbuf->rx_cons == NR_LBUF)
-		lbuf->rx_cons = 0;
+	lbuf->cons[rx]++;
+	if (lbuf->cons[rx] == NR_LBUF)
+		lbuf->cons[rx] = 0;
+}
+
+static void enable_tx_intr(struct nf10_adapter *adapter)
+{
+	/* FIXME: replace 0xcacabeef */
+	nf10_writel(adapter, TX_LBUF_INTR_CTRL, 0xcacabeef);
 }
 
 static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx)
@@ -142,12 +153,12 @@ static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx
 
 	netif_dbg(adapter, rx_status, adapter->netdev,
 		  "RX lbuf[%lu] is prepared to nf10\n", idx);
-	if (unlikely((unsigned int)idx != lbuf->rx_cons))
+	if (unlikely((unsigned int)idx != lbuf->cons[RX]))
 		netif_warn(adapter, rx_status, adapter->netdev,
 			   "prepared idx(=%lu) mismatches rx_cons=%u\n",
-			   idx, lbuf->rx_cons);
+			   idx, lbuf->cons[RX]);
 
-	inc_rx_cons(adapter);
+	inc_cons(adapter, RX);
 }
 
 static void nf10_lbuf_prepare_rx_all(struct nf10_adapter *adapter)
@@ -178,14 +189,8 @@ static int __nf10_lbuf_init_buffers(struct nf10_adapter *adapter, int rx)
 	if (unlikely(err))	/* failed to allocate all lbufs */
 		for (i--; i >= 0; i--)
 			unmap_and_free_lbuf(adapter, &lbuf->descs[rx][i], rx);
-	else {
-		if (rx) {
-			lbuf->rx_cons = 0;
-			nf10_lbuf_prepare_rx_all(adapter);
-		}
-		else
-			lbuf->tx_cons = 0;
-	}
+	else if (rx) 
+		nf10_lbuf_prepare_rx_all(adapter);
 
 	return err;
 }
@@ -232,7 +237,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	struct net_device *netdev = adapter->netdev;
 	struct sk_buff *skb;
 	struct large_buffer *lbuf = get_lbuf();
-	unsigned int rx_cons = lbuf->rx_cons;
+	unsigned int rx_cons = lbuf->cons[RX];
 	unsigned int rx_packets = 0;
 	unsigned int data_len;
 #ifdef CONFIG_SKBPOOL
@@ -336,7 +341,7 @@ static u64 nf10_lbuf_user_init(struct nf10_adapter *adapter)
 	adapter->nr_user_mmap = 0;
 
 	/* encode the current tx_cons and rx_cons */
-	return ((u64)lbuf->tx_cons << 32 | lbuf->rx_cons);
+	return ((u64)lbuf->cons[TX] << 32 | lbuf->cons[RX]);
 }
 
 static unsigned long nf10_lbuf_get_pfn(struct nf10_adapter *adapter,
@@ -383,6 +388,8 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 	lbuf_hw.adapter = adapter;
 	adapter->user_ops = &lbuf_user_ops;
 
+	enable_tx_intr(adapter);
+
 	return 0;
 }
 
@@ -398,15 +405,16 @@ static void nf10_lbuf_free(struct nf10_adapter *adapter)
 
 static int nf10_lbuf_init_buffers(struct nf10_adapter *adapter)
 {
-	/* TODO: TX */
+	struct large_buffer *lbuf = get_lbuf();
+
+	lbuf->cons[TX] = 0;
+	lbuf->cons[RX] = 0;
 
 	return __nf10_lbuf_init_buffers(adapter, 1);	/* RX */
 }
 
 static void nf10_lbuf_free_buffers(struct nf10_adapter *adapter)
 {
-	/* TODO: TX */
-
 	__nf10_lbuf_free_buffers(adapter, 1);		/* RX */
 }
 
@@ -424,7 +432,7 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 				     int *work_done, int budget)
 {
 	struct large_buffer *lbuf = get_lbuf();
-	unsigned int rx_cons = lbuf->rx_cons;
+	unsigned int rx_cons = lbuf->cons[RX];
 	struct desc *cur_rx_desc = &lbuf->descs[RX][rx_cons];
 	struct desc rx_desc = *cur_rx_desc;	/* copy */
 
@@ -455,9 +463,50 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 					struct sk_buff *skb,
 					struct net_device *dev)
 {
-	/* TODO */
-	pr_debug("tx: len=%u\n", skb->len);
+	struct large_buffer *lbuf = get_lbuf();
+	struct desc *desc;
+	unsigned int tx_cons;
+	u32 nr_qwords;
+
+	/* TODO: lock is required? */
+
+	tx_cons = lbuf->cons[TX];
+	desc = &lbuf->descs[TX][tx_cons];
+
+	pr_debug("tx[%u]: len=%u, head=%p, data=%p\n", tx_cons, skb->len, skb->head, skb->data);
+
+	/* TODO: check availability */
+
+	/* TODO: check if enough headroom exists, if not copy...
+	 * FIXME: replace 8 with macro */
+	skb_push(skb, 8);
+	((u32 *)skb->data)[0] = 0;
+	((u32 *)skb->data)[1] = skb->len - 8;
+
+	/* FIXME: do we need padding something at tailroom? */
+
+	nr_qwords = ALIGN(skb->len, 8) >> 3;
+
+	pr_debug("\t-> len=%u, head=%p, data=%p, nr_qwords=%u, addr=%u, stat=%u\n",
+		 skb->len, skb->head, skb->data, nr_qwords, tx_addr_off(tx_cons), tx_stat_off(tx_cons));
+
+	desc->kern_addr = skb->data;
+	desc->skb = skb;
+	desc->dma_addr = pci_map_single(adapter->pdev, skb->data, skb->len,
+					PCI_DMA_TODEVICE);
+	/* TODO: check dma map error */
+
+	nf10_writeq(adapter, tx_addr_off(tx_cons), desc->dma_addr);
+	nf10_writel(adapter, tx_stat_off(tx_cons), nr_qwords);
+
+	inc_cons(adapter, TX);
+
+	/****** TEST *******/
+	udelay(1000);
+	pci_unmap_single(adapter->pdev, desc->dma_addr, skb->len,
+			 PCI_DMA_TODEVICE);
 	dev_kfree_skb_any(skb);
+
 	return NETDEV_TX_OK;
 }
 
