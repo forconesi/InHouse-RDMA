@@ -354,8 +354,9 @@ module  pci_exp_64b_app (
         .commited_rd_address(commited_rd_address),  // O [`BF+1:0]
         .qwords_to_send(qwords_to_send),            // I [4:0]
         .rd_addr_change(rd_addr_change),            // O 
-        .commited_rd_address_to_mac(rd_addr_extended)     // O [`BF+1:0]
-
+        .commited_rd_address_to_mac(rd_addr_extended),    // O [`BF+1:0]
+        .my_turn ( rx_turn ),     // I
+        .driving_interface ( rx_driven )      // O
         );
 
     //////////////////////////////////////////////////////////////////////////////////////////
@@ -459,14 +460,14 @@ module  pci_exp_64b_app (
     enpoint_arbitration enpoint_arbitration_mod (
         .trn_clk ( trn_clk ),                       // I
         .trn_lnk_up_n ( trn_lnk_up_n ),             // I
-        //.rx_turn ( rx_turn ),                       // O
+        .rx_turn ( rx_turn ),                       // O
         .rx_driven ( rx_driven ),                   // I
-        //.tx_turn ( tx_turn ),                       // O
+        .tx_turn ( tx_turn ),                       // O
         .tx_driven ( tx_driven )                    // I 
         );
     // debug
-    assign rx_turn = 1'b0;
-    assign tx_turn = 1'b1;
+    //assign rx_turn = 1'b0;
+    //assign tx_turn = 1'b1;
 
     assign trn_td = rx_trn_td | tx_trn_td;
     assign trn_trem_n = rx_trn_trem_n & tx_trn_trem_n;
