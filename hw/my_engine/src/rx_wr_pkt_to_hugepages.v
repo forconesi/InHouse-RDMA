@@ -352,7 +352,7 @@ module rx_wr_pkt_to_hugepages (
 
                 s1 : begin
                     driving_interface <= 1'b0;                                              // we're taking the risk of starving the tx process
-                    if ( (trn_tbuf_av[1]) && (!trn_tdst_rdy_n) && (my_turn)) begin          // credits available and endpointready and myturn
+                    if ( (trn_tbuf_av[1]) && (!trn_tdst_rdy_n) && (my_turn || driving_interface) ) begin          // credits available and endpointready and myturn
                         if (change_huge_page_reg1 || remember_to_change_huge_page) begin                         // previous module wants to change huge page
                             remember_to_change_huge_page <= 1'b0;
                             driving_interface <= 1'b1;
