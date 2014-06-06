@@ -268,7 +268,6 @@ module tx_wr_pkt_to_bram (
 
                 s2 : begin
                     next_wr_addr <= look_ahead_next_wr_addr;
-                    huge_page_addr_read_from <= look_ahead_huge_page_addr_read_from;
                     huge_page_qwords_counter <= huge_page_qwords_counter + qwords_to_rd;
                     if (read_chunk_ack) begin
                         read_chunk <= 1'b0;
@@ -277,6 +276,7 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s3 : begin
+                    huge_page_addr_read_from <= look_ahead_huge_page_addr_read_from;
                     if (huge_page_qwords_counter < current_huge_page_qwords) begin
                         trigger_rd_tlp_fsm <= s1;
                     end

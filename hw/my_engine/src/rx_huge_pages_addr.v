@@ -89,9 +89,9 @@ module rx_huge_pages_addr (
 
                 s1 : begin
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
-                        case (trn_rd[37:34])
+                        case (trn_rd[39:34])
 
-                            4'b0010 : begin     // huge page address
+                            6'b010000 : begin     // huge page address
                                 huge_page_addr_1[7:0] <= trn_rd[31:24];
                                 huge_page_addr_1[15:8] <= trn_rd[23:16];
                                 huge_page_addr_1[23:16] <= trn_rd[15:8];
@@ -99,7 +99,7 @@ module rx_huge_pages_addr (
                                 state <= s2;
                             end
 
-                            4'b0100 : begin     // huge page address
+                            6'b010010 : begin     // huge page address
                                 huge_page_addr_2[7:0] <= trn_rd[31:24];
                                 huge_page_addr_2[15:8] <= trn_rd[23:16];
                                 huge_page_addr_2[23:16] <= trn_rd[15:8];
@@ -107,12 +107,12 @@ module rx_huge_pages_addr (
                                 state <= s3;
                             end
 
-                            4'b0110 : begin     // huge page un-lock
+                            6'b011000 : begin     // huge page un-lock
                                 huge_page_unlock_1 <= 1'b1;
                                 state <= s0;
                             end
 
-                            4'b0111 : begin     // huge page un-lock
+                            6'b011001 : begin     // huge page un-lock
                                 huge_page_unlock_2 <= 1'b1;
                                 state <= s0;
                             end

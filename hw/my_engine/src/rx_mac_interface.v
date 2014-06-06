@@ -15,12 +15,12 @@ module rx_mac_interface (
     input                rx_bad_frame,
 
     // Internal memory driver
-    output        [`BF:0]     wr_addr,
+    output reg    [`BF:0]     wr_addr,
     output reg    [63:0]      wr_data,
     output reg                wr_en,
     
     // Internal logic
-    output        [`BF:0]     commited_wr_address,
+    output reg    [`BF:0]     commited_wr_address,
     input                     rd_addr_updated,               //250 MHz domain driven
     input         [`BF:0]     commited_rd_address              //250 MHz domain driven
 
@@ -38,8 +38,6 @@ module rx_mac_interface (
     reg     [7:0]     state;
     reg     [31:0]    byte_counter;
     reg     [`BF:0]   aux_wr_addr;
-    reg     [`BF:0]   start_wr_addr_next_pkt;
-    reg     [`BF:0]   wr_addr_extended;
     reg     [`BF:0]   diff;
     (* KEEP = "TRUE" *)reg     [31:0]   dropped_frames_counter;
     
@@ -110,16 +108,13 @@ module rx_mac_interface (
         end     // not reset
     end  //always
 
-    assign wr_addr = wr_addr_extended[`BF:0];
-    assign commited_wr_address = start_wr_addr_next_pkt;    // address with valid data
-
     ////////////////////////////////////////////////
     // ethernet frame reception and memory write
     ////////////////////////////////////////////////
     always @( posedge clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
-            start_wr_addr_next_pkt <= 'b0;
+            commited_wr_address <= 'b0;
             diff <= 'b0;
             dropped_frames_counter <= 32'b0;
             wr_en <= 1'b0;
@@ -134,7 +129,7 @@ module rx_mac_interface (
 
                 s0 : begin                                  // configure mac core to present preamble and save the packet timestamp while its reception
                     byte_counter <= 32'b0;
-                    aux_wr_addr <= start_wr_addr_next_pkt +1;
+                    aux_wr_addr <= commited_wr_address +1;
                     wr_en <= 1'b0;
                     if (rx_data_valid != 8'b0) begin      // wait for sof (preamble)
                         state <= s1;
@@ -143,7 +138,7 @@ module rx_mac_interface (
 
                 s1 : begin
                     wr_data <= rx_data;
-                    wr_addr_extended <= aux_wr_addr;
+                    wr_addr <= aux_wr_addr;
                     wr_en <= 1'b1;
                     aux_wr_addr <= aux_wr_addr +1;
 
@@ -196,10 +191,10 @@ module rx_mac_interface (
 
                 s2 : begin
                     wr_data <= {byte_counter, 32'b0};
-                    wr_addr_extended <= start_wr_addr_next_pkt;
+                    wr_addr <= commited_wr_address;
                     wr_en <= 1'b1;
 
-                    start_wr_addr_next_pkt <= aux_wr_addr;                      // commit the packet
+                    commited_wr_address <= aux_wr_addr;                      // commit the packet
                     aux_wr_addr <= aux_wr_addr +1;
                     byte_counter <= 32'b0;
 

@@ -19,9 +19,8 @@ module tx_mac_interface (
     
     
     // Internal logic
-    output reg    [`BF:0]     commited_rd_address,
+    output        [`BF:0]     commited_rd_address,
     output reg                commited_rd_address_change,
-    input         [`BF:0]     wr_addr,                         //250 MHz domain driven
     input                     wr_addr_updated,                         //250 MHz domain driven
     input         [`BF:0]     commited_wr_addr                //250 MHz domain driven
 
@@ -112,6 +111,8 @@ module tx_mac_interface (
 
         end     // not reset
     end  //always
+
+    assign commited_rd_address = rd_addr;
 
     ////////////////////////////////////////////////
     // ethernet frame transmition and memory read

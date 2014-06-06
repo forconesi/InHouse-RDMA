@@ -49,8 +49,8 @@ INST "ep/pcie_ep0/pcie_blk/SIO/.pcie_gt_wrapper_i/GTD[4].GT_i" LOC = GTX_DUAL_X1
 INST "ep/pcie_ep0/pcie_blk/SIO/.pcie_gt_wrapper_i/GTD[6].GT_i" LOC = GTX_DUAL_X1Y2;
 
 # XAUI D
-INST my_xaui/xaui_block/rocketio_wrapper_i/tile0_xaui_v10_4_rocketio_wrapper_i/gtx_dual_i LOC=GTX_DUAL_X0Y11;
-INST my_xaui/xaui_block/rocketio_wrapper_i/tile1_xaui_v10_4_rocketio_wrapper_i/gtx_dual_i LOC=GTX_DUAL_X0Y10;
+INST xaui_d/xaui_block/rocketio_wrapper_i/tile0_xaui_v10_4_rocketio_wrapper_i/gtx_dual_i LOC=GTX_DUAL_X0Y11;
+INST xaui_d/xaui_block/rocketio_wrapper_i/tile1_xaui_v10_4_rocketio_wrapper_i/gtx_dual_i LOC=GTX_DUAL_X0Y10;
 
 #LEDs
 #NET "LED01"             LOC = "AK25" | IOSTANDARD = LVCMOS33;       # CAN BE USED FOR DEBUG
@@ -121,7 +121,7 @@ TIMESPEC "TS_MGTCLK"  = PERIOD "MGTCLK" 100.00 MHz HIGH 50 % ;
 NET "*txoutclk*" TNM_NET="clk156_top";
 TIMESPEC "TS_clk156_top" = PERIOD "clk156_top" 156.25 MHz;
 
-NET *my_xaui/xaui_block/rocketio_wrapper_i/tile1_rxrecclk0_i TNM_NET=clk156_rec;
+NET *xaui_d/xaui_block/rocketio_wrapper_i/tile1_rxrecclk0_i TNM_NET=clk156_rec;
 TIMESPEC TS_clk156_rec = PERIOD clk156_rec 156.25MHz;
 
 NET "usr_100MHz" TNM_NET="usr_100MHz_pin";

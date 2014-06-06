@@ -522,7 +522,6 @@ module my_top (
         .rd_data(tx_rd_data),                  // I [63:0]
         .commited_rd_address(tx_commited_rd_address),  // O [`BF:0]
         .commited_rd_address_change(tx_commited_rd_address_change),  // O
-        .wr_addr(tx_wr_addr),                   // I [`BF:0]
         .wr_addr_updated(tx_wr_addr_updated),   // I
         .commited_wr_addr(tx_commited_wr_addr)  // I [`BF:0]
         );

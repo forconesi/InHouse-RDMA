@@ -100,9 +100,9 @@ module tx_huge_pages_addr (
 
                 s1 : begin
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
-                        case (trn_rd[37:34])
+                        case (trn_rd[39:34])
 
-                            4'b1010 : begin     // huge page address
+                            6'b100000 : begin     // huge page address
                                 huge_page_addr_1[7:0] <= trn_rd[31:24];
                                 huge_page_addr_1[15:8] <= trn_rd[23:16];
                                 huge_page_addr_1[23:16] <= trn_rd[15:8];
@@ -110,7 +110,7 @@ module tx_huge_pages_addr (
                                 state <= s2;
                             end
 
-                            4'b1100 : begin     // huge page address
+                            6'b100010 : begin     // huge page address
                                 huge_page_addr_2[7:0] <= trn_rd[31:24];
                                 huge_page_addr_2[15:8] <= trn_rd[23:16];
                                 huge_page_addr_2[23:16] <= trn_rd[15:8];
@@ -118,7 +118,7 @@ module tx_huge_pages_addr (
                                 state <= s3;
                             end
 
-                            4'b1011 : begin     // huge page un-lock
+                            6'b101000 : begin     // huge page un-lock
                                 huge_page_unlock_1 <= 1'b1;
                                 huge_page_qwords_1[7:0] <= trn_rd[31:24];
                                 huge_page_qwords_1[15:8] <= trn_rd[23:16];
@@ -127,7 +127,7 @@ module tx_huge_pages_addr (
                                 state <= s0;
                             end
 
-                            4'b1101 : begin     // huge page un-lock
+                            6'b101001 : begin     // huge page un-lock
                                 huge_page_unlock_2 <= 1'b1;
                                 huge_page_qwords_2[7:0] <= trn_rd[31:24];
                                 huge_page_qwords_2[15:8] <= trn_rd[23:16];
@@ -136,7 +136,7 @@ module tx_huge_pages_addr (
                                 state <= s0;
                             end
 
-                            4'b1000 : begin     // completion buffer address
+                            6'b101100 : begin     // completion buffer address
                                 completed_buffer_address[7:0] <= trn_rd[31:24];
                                 completed_buffer_address[15:8] <= trn_rd[23:16];
                                 completed_buffer_address[23:16] <= trn_rd[15:8];
@@ -144,7 +144,7 @@ module tx_huge_pages_addr (
                                 state <= s4;
                             end
 
-                            4'b1001 : begin     // interrupts eneable and disable
+                            6'b101110 : begin     // interrupts eneable and disable
                                 interrupts_enabled <= ~interrupts_enabled;
                                 state <= s0;
                             end
