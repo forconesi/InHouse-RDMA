@@ -242,8 +242,8 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     ret = request_irq(pdev->irq, mdio_access_interrupt_handler, 0, DRV_NAME, pdev);             // with MSI in linux we cannot allocate more than one vector. use the interrupt line with this function during intialization
     if (ret) {printk(KERN_ERR "Myd: request_irq\n"); goto err_08;}
     
-    //ret = configure_ael2005_phy_chips(my_drv_data);
-    //if (ret) {printk(KERN_ERR "Myd: warning, AEL2005 not configured\n");}
+    ret = configure_ael2005_phy_chips(my_drv_data);
+    if (ret) {printk(KERN_ERR "Myd: warning, AEL2005 not configured\n");}
  
     free_irq(pdev->irq, pdev);
     // AEL2005 MDIO configuration ready
@@ -260,10 +260,7 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     my_drv_data->huge_page_kern_address1 = (void *)page_address(my_drv_data->huge_page1);
     my_drv_data->huge_page_kern_address2 = (void *)page_address(my_drv_data->huge_page2);
     
-    // Get huge pages' physical address
-    my_drv_data->huge_page1_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page1), 2*1024*1024, PCI_DMA_FROMDEVICE);
-    my_drv_data->huge_page2_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page2), 2*1024*1024, PCI_DMA_FROMDEVICE);
-    
+ 
     #ifdef MY_DEBUG
     memset(my_drv_data->huge_page_kern_address1, 0, 2*1024*1024);
     memset(my_drv_data->huge_page_kern_address2, 0, 2*1024*1024);
@@ -296,11 +293,12 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     //allocate an out-of-band buffer where hw will write when a huge page was read entirely
 
     // Enable tx interrupts from board
-    *(((u32 *)my_drv_data->bar2) + 9) = 0xcacabeef;
+    ssleep(2);
+    *(((u32 *)my_drv_data->bar2) + 46) = 0xcacabeef;
 
     my_drv_data->tx_completion_buffer_kern_address = pci_alloc_consistent(pdev, 2*4, &my_drv_data->tx_completion_buffer_dma_addr);    // number of huge pages by 1dw/huge page
     printk(KERN_INFO "Myd: tx_completion_buffer_dma_addr dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->tx_completion_buffer_dma_addr >> 32), (int)(u64)my_drv_data->tx_completion_buffer_dma_addr);
-    *(((u64 *)my_drv_data->bar2) + 4) = (u64)my_drv_data->tx_completion_buffer_dma_addr;
+    *(((u64 *)my_drv_data->bar2) + 22) = (u64)my_drv_data->tx_completion_buffer_dma_addr;
     // I will use the page 1 for the experiment
     u32 *huge_page_address;
     huge_page_address = (u32 *)my_drv_data->huge_page_kern_address1;
@@ -358,11 +356,12 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     huge_page_address[40] = 0xcaca0703;
     huge_page_address[41] = 0xbeefbeef;//payload finishes in even number of dwords 
 
+    my_drv_data->huge_page1_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page1), 2*1024*1024, PCI_DMA_FROMDEVICE);
 
     // send the address of the filled huge page to the board
-    *(((u64 *)my_drv_data->bar2) + 5) = my_drv_data->huge_page1_dma_addr;
+    *(((u64 *)my_drv_data->bar2) + 16) = my_drv_data->huge_page1_dma_addr;
     // send to the board the number of qwords written to the huge page
-    *(((u32 *)my_drv_data->bar2) + 11) = 21;
+    *(((u32 *)my_drv_data->bar2) + 40) = 21;
 
     // Change to another huge page
     huge_page_address = (u32 *)my_drv_data->huge_page_kern_address2;
@@ -424,11 +423,18 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     huge_page_address[40] = cpu_to_be32(0x32373135); 
     huge_page_address[41] = cpu_to_be32(0x315d7d00); //payload finishes in even number of dwords 
 
-    // send the address of the filled huge page to the board
-    *(((u64 *)my_drv_data->bar2) + 6) = my_drv_data->huge_page2_dma_addr;
-    // send to the board the number of qwords written to the huge page
-    *(((u32 *)my_drv_data->bar2) + 13) = 21;
+    my_drv_data->huge_page2_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page2), 2*1024*1024, PCI_DMA_FROMDEVICE);
 
+    // send the address of the filled huge page to the board
+    *(((u64 *)my_drv_data->bar2) + 17) = my_drv_data->huge_page2_dma_addr;
+    // send to the board the number of qwords written to the huge page
+    *(((u32 *)my_drv_data->bar2) + 41) = 21;
+
+
+    #ifdef MY_DEBUG
+    printk(KERN_INFO "Myd: huge_page1 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page1_dma_addr >> 32), (int)(u64)my_drv_data->huge_page1_dma_addr);
+    printk(KERN_INFO "Myd: huge_page2 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page2_dma_addr >> 32), (int)(u64)my_drv_data->huge_page2_dma_addr);
+    #endif
 
     // check if huge page 1 is free. In this case we can reuse it or we can pass a new address instead
     // in this case we reuse it
