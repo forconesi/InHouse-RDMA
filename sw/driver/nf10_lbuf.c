@@ -134,7 +134,7 @@ static void inc_cons(struct nf10_adapter *adapter, int rx)
 static void enable_tx_intr(struct nf10_adapter *adapter)
 {
 	/* FIXME: replace 0xcacabeef */
-	nf10_writel(adapter, TX_LBUF_INTR_CTRL, 0xcacabeef);
+	nf10_writel(adapter, TX_INTR_CTRL_ADDR, 0xcacabeef);
 }
 
 static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx)
@@ -487,7 +487,7 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 
 	nr_qwords = ALIGN(skb->len, 8) >> 3;
 
-	pr_debug("\t-> len=%u, head=%p, data=%p, nr_qwords=%u, addr=%u, stat=%u\n",
+	pr_debug("\t-> len=%u, head=%p, data=%p, nr_qwords=%u, addr=0x%x, stat=0x%x\n",
 		 skb->len, skb->head, skb->data, nr_qwords, tx_addr_off(tx_cons), tx_stat_off(tx_cons));
 
 	desc->kern_addr = skb->data;

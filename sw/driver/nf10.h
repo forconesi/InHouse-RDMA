@@ -59,12 +59,12 @@ struct nf10_user_ops {
 
 static inline void nf10_writel(struct nf10_adapter *adapter, int off, u32 val)
 {
-	writel(val, (u32 *)adapter->bar2 + off);
+	writel(val, adapter->bar2 + off);
 }
 
 static inline void nf10_writeq(struct nf10_adapter *adapter, int off, u64 val)
 {
-	writeq(val, (u64 *)adapter->bar2 + off);
+	writeq(val, adapter->bar2 + off);
 }
 
 extern void nf10_set_ethtool_ops(struct net_device *netdev);
