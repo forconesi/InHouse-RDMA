@@ -178,12 +178,12 @@ module tx_mac_interface (
                         end
                     endcase
 
-                    if (diff >= qwords_in_eth) begin
+                    if (!diff) begin
+                        trigger_frame_fsm <= s0;
+                    end
+                    else if (diff >= qwords_in_eth) begin
                         trigger_tx_frame <= 1'b1;
                         trigger_frame_fsm <= s2;
-                    end
-                    else if (!diff) begin
-                        trigger_frame_fsm <= s0;
                     end
                 end
 
