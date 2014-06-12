@@ -32,6 +32,7 @@
 #define TX_LBUF_STAT_BASE	0xA0
 #define TX_COMPLETION_ADDR	0xB0
 #define TX_INTR_CTRL_ADDR	0xB8
+#define TX_COMPLETION_SIZE	(NR_LBUF << 2)	/* each completion entry is DWORD */
 
 #define rx_addr_off(i)	(RX_LBUF_ADDR_BASE + (i << 3))
 #define rx_stat_off(i)	(RX_LBUF_STAT_BASE + (i << 2))

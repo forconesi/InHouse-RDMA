@@ -17,6 +17,8 @@ struct desc {
 struct large_buffer {
 	struct desc descs[2][NR_LBUF];	/* 0=TX and 1=RX */
 	unsigned int prod[2], cons[2];
+	void *tx_completion_kern_addr;
+	dma_addr_t tx_completion_dma_addr;
 };
 
 static struct lbuf_hw {
@@ -152,6 +154,25 @@ static void enable_tx_intr(struct nf10_adapter *adapter)
 {
 	/* FIXME: replace 0xcacabeef */
 	nf10_writel(adapter, TX_INTR_CTRL_ADDR, 0xcacabeef);
+}
+
+static int init_tx_completion_buffer(struct nf10_adapter *adapter)
+{
+	struct large_buffer *lbuf = get_lbuf();
+
+	lbuf->tx_completion_kern_addr =
+		pci_alloc_consistent(adapter->pdev, TX_COMPLETION_SIZE,
+				     &lbuf->tx_completion_dma_addr);
+	return lbuf->tx_completion_kern_addr ? 0 : -ENOMEM;
+}
+
+static void free_tx_completion_buffer(struct nf10_adapter *adapter)
+{
+	struct large_buffer *lbuf = get_lbuf();
+
+	pci_free_consistent(adapter->pdev, TX_COMPLETION_SIZE,
+			    lbuf->tx_completion_kern_addr,
+			    lbuf->tx_completion_dma_addr);
 }
 
 static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx)
@@ -423,18 +444,26 @@ static void nf10_lbuf_free(struct nf10_adapter *adapter)
 static int nf10_lbuf_init_buffers(struct nf10_adapter *adapter)
 {
 	struct large_buffer *lbuf = get_lbuf();
+	int err = 0;
 
 	lbuf->prod[TX] = 0;
 	lbuf->prod[RX] = 0;
 	lbuf->cons[TX] = 0;
 	lbuf->cons[RX] = 0;
 
-	return __nf10_lbuf_init_buffers(adapter, 1);	/* RX */
+	if ((err = init_tx_completion_buffer(adapter)))
+		return err;
+
+	if ((err = __nf10_lbuf_init_buffers(adapter, RX)))
+		free_tx_completion_buffer(adapter);
+
+	return err;
 }
 
 static void nf10_lbuf_free_buffers(struct nf10_adapter *adapter)
 {
-	__nf10_lbuf_free_buffers(adapter, 1);		/* RX */
+	free_tx_completion_buffer(adapter);
+	__nf10_lbuf_free_buffers(adapter, RX);
 }
 
 static int nf10_lbuf_napi_budget(void)
