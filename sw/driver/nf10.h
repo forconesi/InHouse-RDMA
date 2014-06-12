@@ -36,6 +36,18 @@ struct nf10_adapter {
 	wait_queue_head_t wq_user_intr;
 };
 
+/* cmd for ctrl_irq() */
+enum {
+	IRQ_CTRL_ENABLE_BIT = 0,
+	IRQ_CTRL_RX_BIT,
+	IRQ_CTRL_END_BIT,
+};
+#define IRQ_CTRL_ENABLE		(1 << IRQ_CTRL_ENABLE_BIT)
+#define IRQ_CTRL_RX		(1 << IRQ_CTRL_RX_BIT)
+#define IRQ_CTRL_MASK		((1 << IRQ_CTRL_END_BIT) - 1)
+
+#define IRQ_CTRL_TX_ENABLE	((IRQ_CTRL_ENABLE & ~IRQ_CTRL_RX) & IRQ_CTRL_MASK)
+
 struct nf10_hw_ops {
 	int		(*init)(struct nf10_adapter *adapter);
 	void		(*free)(struct nf10_adapter *adapter);
@@ -48,6 +60,7 @@ struct nf10_hw_ops {
 				      struct sk_buff *skb, 
 				      struct net_device *dev);
 	int		(*clean_tx_irq)(struct nf10_adapter *adapter);
+	unsigned long	(*ctrl_irq)(struct nf10_adapter *adapter, unsigned long cmd);
 };
 
 struct nf10_user_ops {

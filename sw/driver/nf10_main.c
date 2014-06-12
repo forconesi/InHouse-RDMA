@@ -75,9 +75,14 @@ static netdev_tx_t nf10_start_xmit(struct sk_buff *skb,
 	return adapter->hw_ops->start_xmit(adapter, skb, netdev);
 }
 
-int nf10_clean_tx_irq(struct nf10_adapter *adapter)
+static int nf10_clean_tx_irq(struct nf10_adapter *adapter)
 {
 	return adapter->hw_ops->clean_tx_irq(adapter);
+}
+
+static void nf10_enable_tx_irq(struct nf10_adapter *adapter)
+{
+	adapter->hw_ops->ctrl_irq(adapter, IRQ_CTRL_TX_ENABLE);
 }
 
 static int nf10_up(struct net_device *netdev)
@@ -92,6 +97,7 @@ static int nf10_up(struct net_device *netdev)
 			return err;
 		}
 		reset = true;
+		nf10_enable_tx_irq(adapter);
 		netif_info(adapter, ifup, netdev, "PCIe bus is reset\n");
 	}
 

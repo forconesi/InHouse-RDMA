@@ -134,6 +134,14 @@ static bool desc_full(struct nf10_adapter *adapter, int rx)
 	       lbuf->descs[rx][lbuf->cons[rx]].kern_addr != NULL;
 }
 
+static bool desc_empty(struct nf10_adapter *adapter, int rx)
+{
+	struct large_buffer *lbuf = get_lbuf();
+
+	return lbuf->prod[rx] == lbuf->cons[rx] &&
+	       lbuf->descs[rx][lbuf->cons[rx]].kern_addr == NULL;
+}
+
 #define inc_pointer(pointer)	\
 	do { pointer = pointer == NR_LBUF - 1 ? 0 : pointer + 1; } while(0)
 static void inc_prod(struct nf10_adapter *adapter, int rx)
@@ -150,6 +158,29 @@ static void inc_cons(struct nf10_adapter *adapter, int rx)
 	inc_pointer(lbuf->cons[rx]);
 }
 
+static void check_tx_completion(struct nf10_adapter *adapter)
+{
+	struct large_buffer *lbuf = get_lbuf();
+	u32 *completion = lbuf->tx_completion_kern_addr;
+	unsigned int tx_cons = lbuf->cons[TX];
+
+	while (desc_empty(adapter, TX) == false &&
+	       completion[tx_cons] == TX_COMPLETION_OKAY) {
+
+		/* TODO: add skb to gc list */
+
+		lbuf->descs[TX][tx_cons].kern_addr = NULL;
+		completion[tx_cons] = 0;
+		inc_cons(adapter, TX);
+
+		pr_debug("clean tx[%u->%u]\n", tx_cons, lbuf->cons[TX]);
+
+		tx_cons = lbuf->cons[TX];
+	}
+	pr_debug("%s: tx[%u] - empty=%d completion=0x%x\n", __func__,
+		 tx_cons, desc_empty(adapter, TX), completion[tx_cons]);
+}
+
 static void enable_tx_intr(struct nf10_adapter *adapter)
 {
 	/* FIXME: replace 0xcacabeef */
@@ -163,7 +194,13 @@ static int init_tx_completion_buffer(struct nf10_adapter *adapter)
 	lbuf->tx_completion_kern_addr =
 		pci_alloc_consistent(adapter->pdev, TX_COMPLETION_SIZE,
 				     &lbuf->tx_completion_dma_addr);
-	return lbuf->tx_completion_kern_addr ? 0 : -ENOMEM;
+
+	if (lbuf->tx_completion_kern_addr == NULL)
+		return -ENOMEM;
+
+	nf10_writeq(adapter, TX_COMPLETION_ADDR, lbuf->tx_completion_dma_addr);
+
+	return 0;
 }
 
 static void free_tx_completion_buffer(struct nf10_adapter *adapter)
@@ -518,9 +555,13 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 
 	/* TODO: lock is required? */
 
+	check_tx_completion(adapter);
+
 	if (desc_full(adapter, TX)) {
 		pr_warn("WARN: tx desc is full!\n");
+#if 0	/* TODO */
 		netif_stop_queue(dev);
+#endif
 		return NETDEV_TX_BUSY;
 	}
 
@@ -571,6 +612,16 @@ static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
 	return 1;
 }
 
+static unsigned long nf10_lbuf_ctrl_irq(struct nf10_adapter *adapter,
+					unsigned long cmd)
+{
+	if (cmd == IRQ_CTRL_TX_ENABLE) {
+		pr_debug("tx irq enabled\n");
+		enable_tx_intr(adapter);
+	}
+	return 0;
+}
+
 static struct nf10_hw_ops lbuf_hw_ops = {
 	.init			= nf10_lbuf_init,
 	.free			= nf10_lbuf_free,
@@ -579,7 +630,8 @@ static struct nf10_hw_ops lbuf_hw_ops = {
 	.get_napi_budget	= nf10_lbuf_napi_budget,
 	.process_rx_irq		= nf10_lbuf_process_rx_irq,
 	.start_xmit		= nf10_lbuf_start_xmit,
-	.clean_tx_irq		= nf10_lbuf_clean_tx_irq
+	.clean_tx_irq		= nf10_lbuf_clean_tx_irq,
+	.ctrl_irq		= nf10_lbuf_ctrl_irq
 };
 
 void nf10_lbuf_set_hw_ops(struct nf10_adapter *adapter)
