@@ -79,6 +79,12 @@ int nf10_clean_tx_irq(struct nf10_adapter *adapter)
 static int nf10_up(struct net_device *netdev)
 {
 	struct nf10_adapter *adapter = netdev_priv(netdev);
+	int err;
+
+	if ((err = pci_reset_bus(adapter->pdev->bus))) {
+		pr_err("pci_reset_bus error! err=%d\n", err);
+		return err;
+	}
 
 	netif_start_queue(netdev);
 	/* TODO */
