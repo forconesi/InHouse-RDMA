@@ -17,7 +17,7 @@ static int debug = -1;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level");
 
-static bool reset = 0;
+static bool reset = false;
 module_param(reset, bool, 0644);
 MODULE_PARM_DESC(reset, "PCIe reset sent");
 
