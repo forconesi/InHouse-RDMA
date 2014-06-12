@@ -16,7 +16,7 @@ struct desc {
 
 struct large_buffer {
 	struct desc descs[2][NR_LBUF];	/* 0=TX and 1=RX */
-	unsigned int cons[2];
+	unsigned int prod[2], cons[2];
 };
 
 static struct lbuf_hw {
@@ -122,13 +122,30 @@ static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
 	return 0;
 }
 
+static bool desc_full(struct nf10_adapter *adapter, int rx)
+{
+	struct large_buffer *lbuf = get_lbuf();
+
+	/* use non-null kern_addr as an indicator that distinguishes
+	 * full from empty, so make sure kern_addr sets to NULL when consumed */
+	return lbuf->prod[rx] == lbuf->cons[rx] &&
+	       lbuf->descs[rx][lbuf->cons[rx]].kern_addr != NULL;
+}
+
+#define inc_pointer(pointer)	\
+	do { pointer = pointer == NR_LBUF - 1 ? 0 : pointer + 1; } while(0)
+static void inc_prod(struct nf10_adapter *adapter, int rx)
+{
+	struct large_buffer *lbuf = get_lbuf();
+
+	inc_pointer(lbuf->prod[rx]);
+}
+
 static void inc_cons(struct nf10_adapter *adapter, int rx)
 {
 	struct large_buffer *lbuf = get_lbuf();
 
-	lbuf->cons[rx]++;
-	if (lbuf->cons[rx] == NR_LBUF)
-		lbuf->cons[rx] = 0;
+	inc_pointer(lbuf->cons[rx]);
 }
 
 static void enable_tx_intr(struct nf10_adapter *adapter)
@@ -407,6 +424,8 @@ static int nf10_lbuf_init_buffers(struct nf10_adapter *adapter)
 {
 	struct large_buffer *lbuf = get_lbuf();
 
+	lbuf->prod[TX] = 0;
+	lbuf->prod[RX] = 0;
 	lbuf->cons[TX] = 0;
 	lbuf->cons[RX] = 0;
 
@@ -465,15 +484,21 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 {
 	struct large_buffer *lbuf = get_lbuf();
 	struct desc *desc;
-	unsigned int tx_cons;
+	unsigned int tx_prod;
 	u32 nr_qwords;
 
 	/* TODO: lock is required? */
 
-	tx_cons = lbuf->cons[TX];
-	desc = &lbuf->descs[TX][tx_cons];
+	if (desc_full(adapter, TX)) {
+		pr_warn("WARN: tx desc is full!\n");
+		netif_stop_queue(dev);
+		return NETDEV_TX_BUSY;
+	}
 
-	pr_debug("tx[%u]: len=%u, head=%p, data=%p\n", tx_cons, skb->len, skb->head, skb->data);
+	tx_prod = lbuf->prod[TX];
+	desc = &lbuf->descs[TX][tx_prod];
+
+	pr_debug("tx[%u]: len=%u, head=%p, data=%p\n", tx_prod, skb->len, skb->head, skb->data);
 
 	/* TODO: check availability */
 
@@ -488,7 +513,7 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 	nr_qwords = ALIGN(skb->len, 8) >> 3;
 
 	pr_debug("\t-> len=%u, head=%p, data=%p, nr_qwords=%u, addr=0x%x, stat=0x%x\n",
-		 skb->len, skb->head, skb->data, nr_qwords, tx_addr_off(tx_cons), tx_stat_off(tx_cons));
+		 skb->len, skb->head, skb->data, nr_qwords, tx_addr_off(tx_prod), tx_stat_off(tx_prod));
 
 	desc->kern_addr = skb->data;
 	desc->skb = skb;
@@ -496,10 +521,10 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 					PCI_DMA_TODEVICE);
 	/* TODO: check dma map error */
 
-	nf10_writeq(adapter, tx_addr_off(tx_cons), desc->dma_addr);
-	nf10_writel(adapter, tx_stat_off(tx_cons), nr_qwords);
+	nf10_writeq(adapter, tx_addr_off(tx_prod), desc->dma_addr);
+	nf10_writel(adapter, tx_stat_off(tx_prod), nr_qwords);
 
-	inc_cons(adapter, TX);
+	inc_prod(adapter, TX);
 
 	/****** TEST *******/
 	udelay(1000);
