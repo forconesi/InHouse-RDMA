@@ -94,7 +94,7 @@ module tx_wr_pkt_to_bram (
     //-------------------------------------------------------   
     reg             return_huge_page_to_host;
     reg     [14:0]  trigger_rd_tlp_fsm;
-    reg     [`BF:0] diff;
+    (* KEEP = "TRUE" *)reg     [`BF:0] diff;
     reg     [8:0]   next_wr_addr;
     reg     [8:0]   look_ahead_next_wr_addr;
     reg     [8:0]   huge_page_qwords_counter;                                   // the width can be less
@@ -258,8 +258,6 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s1 : begin
-                    look_ahead_next_wr_addr <= next_wr_addr + 'h40;
-                    look_ahead_huge_page_addr_read_from <= huge_page_addr_read_from + 'h200;
                     qwords_to_rd <= remaining_qwords[31:6] ? 'h040 : {2'b0, remaining_qwords[5:0]};
                     if (diff < 'h1C0) begin
                         read_chunk <= 1'b1;
@@ -268,7 +266,8 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s2 : begin
-                    next_wr_addr <= look_ahead_next_wr_addr;
+                    look_ahead_next_wr_addr <= next_wr_addr + qwords_to_rd;
+                    look_ahead_huge_page_addr_read_from <= huge_page_addr_read_from + {qwords_to_rd, 3'b0};
                     look_ahead_huge_page_qwords_counter <= huge_page_qwords_counter + qwords_to_rd;
                     if (read_chunk_ack) begin
                         read_chunk <= 1'b0;
@@ -277,6 +276,7 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s3 : begin
+                    next_wr_addr <= look_ahead_next_wr_addr;
                     huge_page_addr_read_from <= look_ahead_huge_page_addr_read_from;
                     huge_page_qwords_counter <= look_ahead_huge_page_qwords_counter;
                     trigger_rd_tlp_fsm <= s4;
