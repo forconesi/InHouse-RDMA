@@ -17,6 +17,10 @@ static int debug = -1;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level");
 
+static bool reset = 0;
+module_param(reset, bool, 0644);
+MODULE_PARM_DESC(reset, "PCIe reset sent");
+
 /* DMA engine-dependent functions */
 enum {
 	DMA_LARGE_BUFFER = 0,
@@ -79,6 +83,17 @@ int nf10_clean_tx_irq(struct nf10_adapter *adapter)
 static int nf10_up(struct net_device *netdev)
 {
 	struct nf10_adapter *adapter = netdev_priv(netdev);
+	int err;
+
+	if (reset == false) {
+		if ((err = pci_reset_bus(adapter->pdev->bus))) {
+			netif_err(adapter, ifup, netdev,
+				  "failed to reset bus (err=%d)\n", err);
+			return err;
+		}
+		reset = true;
+		netif_info(adapter, ifup, netdev, "PCIe bus is reset\n");
+	}
 
 	netif_start_queue(netdev);
 	/* TODO */
@@ -165,15 +180,6 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct nf10_adapter *adapter;
 	struct net_device *netdev;
 	int err;
-
-	/* XXX: pci_reset_bus() is a better way to reset the devices on
-	 * a specific bus, but it tries to acquire all bus locks including
-	 * its children buses. In this probe handler, bus lock might be
-	 * already acquired and in nf10 we don't assume children and shared
-	 * buses..., but it has to be checked and debugged later on. 
-	 * The reason to reset is that we want to simply make use of PCIe
-	 * reset logic w/o any initialization logic of every flip-flops */
-	pci_reset_bridge_secondary_bus(pdev);
 
 	if ((err = pci_enable_device(pdev)))
 		return err;
