@@ -17,6 +17,10 @@ static int debug = -1;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level");
 
+static bool reset = 0;
+module_param(reset, bool, 0644);
+MODULE_PARM_DESC(reset, "PCIe reset sent");
+
 /* DMA engine-dependent functions */
 enum {
 	DMA_LARGE_BUFFER = 0,
@@ -79,6 +83,17 @@ int nf10_clean_tx_irq(struct nf10_adapter *adapter)
 static int nf10_up(struct net_device *netdev)
 {
 	struct nf10_adapter *adapter = netdev_priv(netdev);
+	int err;
+
+	if (reset == false) {
+		if ((err = pci_reset_bus(adapter->pdev->bus))) {
+			netif_err(adapter, ifup, netdev,
+				  "failed to reset bus (err=%d)\n", err);
+			return err;
+		}
+		reset = true;
+		netif_info(adapter, ifup, netdev, "PCIe bus is reset\n");
+	}
 
 	netif_start_queue(netdev);
 	/* TODO */
