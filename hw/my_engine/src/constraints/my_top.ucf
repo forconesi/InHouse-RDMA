@@ -1,0 +1,132 @@
+##-----------------------------------------------------------------------------
+## Project    : V5-Block Plus for PCI Express
+## File       : xilinx_pci_exp_blk_plus_8_lane_ep_xc5vtx240t-ff1759-2.ucf
+#
+# Use this file only with the device listed below.  Any other
+# combination is invalid.  Do not modify this file except in
+# regions designated for "User" constraints.
+#
+###############################################################################
+# Define Device, Package And Speed Grade
+###############################################################################
+
+CONFIG PART = xc5vtx240t-ff1759-2;
+
+###############################################################################
+# User Time Names / User Time Groups / Time Specs
+###############################################################################
+
+# CONFIG STEPPING = "ES" ;
+
+###############################################################################
+# User Physical Constraints
+###############################################################################
+
+
+###############################################################################
+# Pinout and Related I/O Constraints
+###############################################################################
+
+#NET "sys_reset_n"      LOC = "AR8"  | IOSTANDARD = LVCMOS25 | PULLUP | NODELAY ;	// MF: no reset available
+
+NET "usr_100MHz"      LOC = "AN25"  | IOSTANDARD = LVCMOS33;        # 100MHZ clk on the board
+
+NET  "sys_clk_p"       LOC = "AT4"  ;
+NET  "sys_clk_n"       LOC = "AT3"  ;
+INST "refclk_ibuf"     DIFF_TERM = "TRUE" ;
+
+# refclk for Port XAUI D
+NET "refclk_D_p"  LOC = "D27" ;
+NET "refclk_D_n"  LOC = "C27" ;
+
+# PCIe Lanes 0, 1
+INST "ep/pcie_ep0/pcie_blk/SIO/.pcie_gt_wrapper_i/GTD[0].GT_i" LOC = GTX_DUAL_X1Y5;
+# PCIe Lanes 2, 3
+INST "ep/pcie_ep0/pcie_blk/SIO/.pcie_gt_wrapper_i/GTD[2].GT_i" LOC = GTX_DUAL_X1Y4;
+# PCIe Lanes 4, 5
+INST "ep/pcie_ep0/pcie_blk/SIO/.pcie_gt_wrapper_i/GTD[4].GT_i" LOC = GTX_DUAL_X1Y3;
+# PCIe Lanes 6, 7
+INST "ep/pcie_ep0/pcie_blk/SIO/.pcie_gt_wrapper_i/GTD[6].GT_i" LOC = GTX_DUAL_X1Y2;
+
+# XAUI D
+INST xaui_d/xaui_block/rocketio_wrapper_i/tile0_xaui_v10_4_rocketio_wrapper_i/gtx_dual_i LOC=GTX_DUAL_X0Y11;
+INST xaui_d/xaui_block/rocketio_wrapper_i/tile1_xaui_v10_4_rocketio_wrapper_i/gtx_dual_i LOC=GTX_DUAL_X0Y10;
+
+#LEDs
+#NET "LED01"             LOC = "AK25" | IOSTANDARD = LVCMOS33;       # CAN BE USED FOR DEBUG
+#NET "LED02"             LOC = "AM24" | IOSTANDARD = LVCMOS33;       # CAN BE USED FOR DEBUG
+#NET "LED03"             LOC = "AP20" | IOSTANDARD = LVCMOS33;       # CAN BE USED FOR DEBUG
+
+#AEL2005 MDIO
+NET "ael2005_mdc"             LOC = "AK23" | IOSTANDARD = LVCMOS33;
+NET "ael2005_mdio"            LOC = "AL20" | IOSTANDARD = LVCMOS33;
+
+
+###############################################################################
+# Physical Constraints
+###############################################################################
+
+#
+# BlockRAM placement
+#
+
+INST "ep/pcie_ep0/pcie_blk/pcie_mim_wrapper_i/bram_retry/generate_sdp.ram_sdp_inst"      LOC = RAMB36_X5Y20 ;
+INST "ep/pcie_ep0/pcie_blk/pcie_mim_wrapper_i/bram_tl_tx/generate_tdp2[1].ram_tdp2_inst" LOC = RAMB36_X5Y19 ;
+INST "ep/pcie_ep0/pcie_blk/pcie_mim_wrapper_i/bram_tl_rx/generate_tdp2[1].ram_tdp2_inst" LOC = RAMB36_X5Y18 ;
+INST "ep/pcie_ep0/pcie_blk/pcie_mim_wrapper_i/bram_tl_tx/generate_tdp2[0].ram_tdp2_inst" LOC = RAMB36_X5Y17 ;
+INST "ep/pcie_ep0/pcie_blk/pcie_mim_wrapper_i/bram_tl_rx/generate_tdp2[0].ram_tdp2_inst" LOC = RAMB36_X5Y16 ;
+
+
+###############################################################################
+# Timing Constraints
+###############################################################################
+
+#
+# Ignore timing on asynchronous signals.
+#
+
+#NET "sys_reset_n" TIG ;
+
+#
+# Timing requirements and related constraints.
+#
+
+NET "sys_clk_c"                                      PERIOD = 10ns;
+
+NET "ep/pcie_ep0/pcie_blk/SIO/.pcie_gt_wrapper_i/gt_refclk_out[0]" TNM_NET = "MGTCLK" ;
+
+TIMESPEC "TS_MGTCLK"  = PERIOD "MGTCLK" 100.00 MHz HIGH 50 % ;
+
+
+
+#INST DCM_ADV_INST CLK_FEEDBACK = 1X;
+#INST DCM_ADV_INST CLKDV_DIVIDE = 2.0;
+#INST DCM_ADV_INST CLKFX_DIVIDE = 1;
+#INST DCM_ADV_INST CLKFX_MULTIPLY = 4;
+#INST DCM_ADV_INST CLKIN_DIVIDE_BY_2 = TRUE;
+#INST DCM_ADV_INST CLKIN_PERIOD = 20.000;
+#INST DCM_ADV_INST CLKOUT_PHASE_SHIFT = NONE;
+#INST DCM_ADV_INST DCM_AUTOCALIBRATION = TRUE;
+#INST DCM_ADV_INST DCM_PERFORMANCE_MODE = MAX_SPEED;
+#INST DCM_ADV_INST DESKEW_ADJUST = SYSTEM_SYNCHRONOUS;
+#INST DCM_ADV_INST DFS_FREQUENCY_MODE = LOW;
+#INST DCM_ADV_INST DLL_FREQUENCY_MODE = LOW;
+#INST DCM_ADV_INST DUTY_CYCLE_CORRECTION = TRUE;
+#INST DCM_ADV_INST FACTORY_JF = F0F0;
+#INST DCM_ADV_INST PHASE_SHIFT = 0;
+#INST DCM_ADV_INST STARTUP_WAIT = FALSE;
+#INST DCM_ADV_INST SIM_DEVICE = VIRTEX5;
+
+
+NET "*txoutclk*" TNM_NET="clk156_top";
+TIMESPEC "TS_clk156_top" = PERIOD "clk156_top" 156.25 MHz;
+
+NET *xaui_d/xaui_block/rocketio_wrapper_i/tile1_rxrecclk0_i TNM_NET=clk156_rec;
+TIMESPEC TS_clk156_rec = PERIOD clk156_rec 156.25MHz;
+
+NET "usr_100MHz" TNM_NET="usr_100MHz_pin";
+TIMESPEC "TS_usr_100MHz_pin" = PERIOD "usr_100MHz_pin" 100 MHz;
+
+###############################################################################
+# End
+###############################################################################

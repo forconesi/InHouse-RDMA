@@ -1,0 +1,8 @@
+INTSTYLE=ise
+INFILE=/local/scratch/mf537/temp/test/hw/my_rx_engine/ise/my_top.ncd
+OUTFILE=/local/scratch/mf537/temp/test/hw/my_rx_engine/ise/my_top.bit
+FAMILY=Virtex5
+PART=xc5vtx240t-2ff1759
+WORKINGDIR=/local/scratch/mf537/temp/test/hw/my_rx_engine/ise
+LICENSE=ISE
+USER_INFO=210693691_174149303_210558342_502

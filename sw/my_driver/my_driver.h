@@ -4,7 +4,7 @@
 
 #define XILINX_VENDOR_ID 0x10EE
 #define MY_APPLICATION_ID 0x4245
-//#define MY_DEBUG 1
+#define MY_DEBUG 1
 #define DRV_NAME "my_driver"
 #define PCI_BAR0 0
 #define PCI_BAR2 2
@@ -30,18 +30,15 @@ struct my_driver_host_data {
     //Huge Pages things
     struct page *huge_page1;
     struct page *huge_page2;
-    struct page *huge_page3;
-    struct page *huge_page4;
 
     u64 huge_page1_dma_addr;
     u64 huge_page2_dma_addr;
-    u64 huge_page3_dma_addr;
-    u64 huge_page4_dma_addr;
+
+    dma_addr_t tx_completion_buffer_dma_addr;
+    void *tx_completion_buffer_kern_address;
 
     void *huge_page_kern_address1;
     void *huge_page_kern_address2;
-    void *huge_page_kern_address3;
-    void *huge_page_kern_address4;
 
     u32 huge_page_index;
 
