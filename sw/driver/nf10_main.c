@@ -97,12 +97,17 @@ static int nf10_up(struct net_device *netdev)
 			return err;
 		}
 		reset = true;
-		nf10_enable_tx_irq(adapter);
 		netif_info(adapter, ifup, netdev, "PCIe bus is reset\n");
 	}
 
+	if ((err = nf10_init_buffers(adapter))) {
+		netif_err(adapter, ifup, netdev,
+			  "failed to initialize packet buffers: err=%d\n", err);
+		return err;
+	}
+
+	nf10_enable_tx_irq(adapter);
 	netif_start_queue(netdev);
-	/* TODO */
 
 	/* FIXME: to test, put the reset of some stats */
 	netdev->stats.rx_packets = 0;
@@ -115,6 +120,7 @@ static int nf10_down(struct net_device *netdev)
 {
 	struct nf10_adapter *adapter = netdev_priv(netdev);
 
+	nf10_free_buffers(adapter);
 	netif_stop_queue(netdev);
 	/* TODO */
 
@@ -257,11 +263,6 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_register_hw_ops;
 	}
 
-	if ((err = nf10_init_buffers(adapter))) {
-		pr_err("failed to initialize packet buffers: err=%d\n", err);
-		goto err_init_buffers;
-	}
-
 	/* direct user access */
 	nf10_init_fops(adapter);
 	init_waitqueue_head(&adapter->wq_user_intr);
@@ -279,8 +280,6 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	return 0;
 
-err_init_buffers:
-	nf10_free(adapter);
 err_register_hw_ops:
 	unregister_netdev(netdev);
 err_register_netdev:
@@ -320,7 +319,6 @@ static void nf10_remove(struct pci_dev *pdev)
 	nf10_remove_fops(adapter);
 	netif_napi_del(&adapter->napi);
 	napi_disable(&adapter->napi);
-	nf10_free_buffers(adapter);
 	nf10_free(adapter);
         unregister_netdev(netdev);
 

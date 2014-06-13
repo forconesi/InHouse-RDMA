@@ -463,8 +463,6 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 	lbuf_hw.adapter = adapter;
 	adapter->user_ops = &lbuf_user_ops;
 
-	enable_tx_intr(adapter);
-
 	return 0;
 }
 
