@@ -33,6 +33,7 @@ module rx_wr_pkt_to_hugepages (
     input                  huge_page_status_2,
     output reg             huge_page_free_1,
     output reg             huge_page_free_2,
+    input                  interrupts_enabled,
 
     output reg             trigger_tlp_ack,
     input                  trigger_tlp,     // 156.25 MHz domain driven
@@ -532,8 +533,13 @@ module rx_wr_pkt_to_hugepages (
                     if (!trn_tdst_rdy_n) begin
                         trn_teof_n <= 1'b1;
                         trn_tsrc_rdy_n <= 1'b1;
-                        cfg_interrupt_n <= 1'b0;
-                        state <= s12;
+                        if (interrupts_enabled) begin
+                            cfg_interrupt_n <= 1'b0;
+                            state <= s12;
+                        end
+                        else begin
+                            state <= s0;
+                        end
                     end
                 end
 
