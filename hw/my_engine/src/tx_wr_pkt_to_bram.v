@@ -37,7 +37,11 @@ module tx_wr_pkt_to_bram (
     input                   read_chunk_ack,
     output reg              send_huge_page_rd_completed,
     input                   send_huge_page_rd_completed_ack,
-    
+
+    output reg              notify,
+    output reg   [63:0]     notification_message,
+    input                   notify_ack,
+
     output reg              send_interrupt,
     input                   send_interrupt_ack,
 
@@ -88,6 +92,8 @@ module tx_wr_pkt_to_bram (
     reg     [14:0]  give_huge_page_fsm;
     reg     [14:0]  free_huge_page_fsm;
     reg             huge_page_available;
+    reg             processing_huge_page_1;
+    reg             processing_huge_page_2;
 
     //-------------------------------------------------------
     // Local trigger_rd_tlp
@@ -110,6 +116,31 @@ module tx_wr_pkt_to_bram (
     reg     [9:0]   commulative_received_data;
 
     //-------------------------------------------------------
+    // Local huge_page_1_notifications
+    //-------------------------------------------------------
+    reg     [14:0]  huge_page_1_notifications_fsm;
+    reg     [63:0]  address_to_notify_huge_page_1;
+    reg             send_notification_huge_page_1;
+    reg             send_notification_huge_page_1_ack;
+    reg     [9:0]   commulative_rd_data_huge_page_1;
+    reg     [9:0]   commulative_received_data_huge_page_1;
+
+    //-------------------------------------------------------
+    // Local huge_page_1_notifications & huge_page_2_notifications mixer
+    //-------------------------------------------------------
+    reg     [14:0]  notification_mixer_fsm;
+
+    //-------------------------------------------------------
+    // Local huge_page_2_notifications
+    //-------------------------------------------------------
+    reg     [14:0]  huge_page_2_notifications_fsm;
+    reg     [63:0]  address_to_notify_huge_page_2;
+    reg             send_notification_huge_page_2;
+    reg             send_notification_huge_page_2_ack;
+    reg     [9:0]   commulative_rd_data_huge_page_2;
+    reg     [9:0]   commulative_received_data_huge_page_2;
+
+    //-------------------------------------------------------
     // Local pulse generation for 156.25 MHz domain
     //-------------------------------------------------------
     reg     [14:0]  pulse_gen_fsm1;
@@ -121,6 +152,8 @@ module tx_wr_pkt_to_bram (
     reg             wr_addr_updated_internal;
     reg     [8:0]   qwords_on_tlp;
     reg             completion_received;
+    reg             completion_received_huge_page_1;
+    reg             completion_received_huge_page_2;
     reg     [31:0]  aux;
     reg     [`BF:0] look_ahead_wr_addr;
     
@@ -159,6 +192,8 @@ module tx_wr_pkt_to_bram (
         if (!reset_n ) begin  // reset
             huge_page_free_1 <= 1'b0;
             huge_page_free_2 <= 1'b0;
+            processing_huge_page_1 <= 1'b0;
+            processing_huge_page_2 <= 1'b0;
             huge_page_available <= 1'b0;
             current_huge_page_addr <= 64'b0;
             give_huge_page_fsm <= s0;
@@ -194,6 +229,7 @@ module tx_wr_pkt_to_bram (
                 s0 : begin
                     if (huge_page_status_1) begin
                         huge_page_available <= 1'b1;
+                        processing_huge_page_1 <= 1'b1;
                         current_huge_page_addr <= huge_page_addr_1;
                         current_huge_page_qwords <= huge_page_qwords_1;
                         give_huge_page_fsm <= s1;
@@ -202,6 +238,7 @@ module tx_wr_pkt_to_bram (
 
                 s1 : begin
                     if (return_huge_page_to_host) begin
+                        processing_huge_page_1 <= 1'b0;
                         huge_page_available <= 1'b0;
                         give_huge_page_fsm <= s2;
                     end
@@ -210,6 +247,7 @@ module tx_wr_pkt_to_bram (
                 s2 : begin
                     if (huge_page_status_2) begin
                         huge_page_available <= 1'b1;
+                        processing_huge_page_2 <= 1'b1;
                         current_huge_page_addr <= huge_page_addr_2;
                         current_huge_page_qwords <= huge_page_qwords_2;
                         give_huge_page_fsm <= s3;
@@ -218,6 +256,7 @@ module tx_wr_pkt_to_bram (
 
                 s3 : begin
                     if (return_huge_page_to_host) begin
+                        processing_huge_page_2 <= 1'b0;
                         huge_page_available <= 1'b0;
                         give_huge_page_fsm <= s0;
                     end
@@ -339,12 +378,20 @@ module tx_wr_pkt_to_bram (
 
                 s1 : begin
                     if (commulative_rd_data == commulative_received_data) begin
-                        send_interrupt <= 1'b1;
                         trigger_interrupts_fsm <= s2;
                     end
                 end
 
-                s2 : begin
+                s2 : begin                                     // added delay to send the interrupt after the notification
+                    trigger_interrupts_fsm <= s3;
+                end
+
+                s3 : begin
+                    send_interrupt <= 1'b1;
+                    trigger_interrupts_fsm <= s4;
+                end
+
+                s4 : begin
                     if (send_interrupt_ack) begin
                         send_interrupt <= 1'b0;
                         trigger_interrupts_fsm <= s0;
@@ -353,6 +400,163 @@ module tx_wr_pkt_to_bram (
 
                 default : begin
                     trigger_interrupts_fsm <= s0;
+                end
+
+            endcase
+        end     // not reset
+    end  //always
+
+    ////////////////////////////////////////////////
+    // huge_page_1_notifications
+    ////////////////////////////////////////////////
+    always @( posedge trn_clk or negedge reset_n ) begin
+
+        if (!reset_n ) begin  // reset
+            commulative_rd_data_huge_page_1 <= 'b0;
+            commulative_received_data_huge_page_1 <= 'b0;
+            send_notification_huge_page_1 <= 1'b0;
+            huge_page_1_notifications_fsm <= s0;
+        end
+        
+        else begin  // not reset
+
+            if (processing_huge_page_1) begin
+                address_to_notify_huge_page_1 <= current_huge_page_addr;
+            end
+            if (read_chunk && read_chunk_ack && processing_huge_page_1) begin
+                commulative_rd_data_huge_page_1 <= commulative_rd_data_huge_page_1 + qwords_to_rd;
+            end
+            if (completion_received_huge_page_1 && completion_received) begin
+                commulative_received_data_huge_page_1 <= commulative_received_data_huge_page_1 + qwords_on_tlp;
+            end
+
+            case (huge_page_1_notifications_fsm)
+
+                s0 : begin
+                    if (commulative_rd_data_huge_page_1 != commulative_received_data_huge_page_1) begin
+                        huge_page_1_notifications_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    if (commulative_rd_data_huge_page_1 == commulative_received_data_huge_page_1) begin
+                        send_notification_huge_page_1 <= 1'b1;
+                        huge_page_1_notifications_fsm <= s2;
+                    end
+                end
+
+                s2 : begin
+                    if (send_notification_huge_page_1_ack) begin
+                        send_notification_huge_page_1 <= 1'b0;
+                        huge_page_1_notifications_fsm <= s0;
+                    end
+                end
+
+                default : begin
+                    huge_page_1_notifications_fsm <= s0;
+                end
+
+            endcase
+        end     // not reset
+    end  //always
+
+    ////////////////////////////////////////////////
+    // huge_page_1_notifications & huge_page_2_notifications mixer
+    ////////////////////////////////////////////////
+    always @( posedge trn_clk or negedge reset_n ) begin
+
+        if (!reset_n ) begin  // reset
+            send_notification_huge_page_1_ack <= 1'b0;
+            send_notification_huge_page_2_ack <= 1'b0;
+            notify <= 1'b0;
+            notification_mixer_fsm <= s0;
+        end
+        
+        else begin  // not reset
+
+            send_notification_huge_page_1_ack <= 1'b0;
+            send_notification_huge_page_2_ack <= 1'b0;
+
+            case (notification_mixer_fsm)
+
+                s0 : begin
+                    if (send_notification_huge_page_1) begin
+                        notification_message <= address_to_notify_huge_page_1;
+                        send_notification_huge_page_1_ack <= 1'b1;
+                        notify <= 1'b1;
+                        notification_mixer_fsm <= s1;
+                    end
+                    else if (send_notification_huge_page_2) begin
+                        notification_message <= address_to_notify_huge_page_2;
+                        send_notification_huge_page_2_ack <= 1'b1;
+                        notify <= 1'b1;
+                        notification_mixer_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    if (notify_ack) begin
+                        notify <= 1'b0;
+                        notification_mixer_fsm <= s0;
+                    end
+                end
+
+                default : begin
+                    notification_mixer_fsm <= s0;
+                end
+
+            endcase
+        end     // not reset
+    end  //always
+
+    ////////////////////////////////////////////////
+    // huge_page_2_notifications
+    ////////////////////////////////////////////////
+    always @( posedge trn_clk or negedge reset_n ) begin
+
+        if (!reset_n ) begin  // reset
+            commulative_rd_data_huge_page_2 <= 'b0;
+            commulative_received_data_huge_page_2 <= 'b0;
+            send_notification_huge_page_2 <= 1'b0;
+            huge_page_2_notifications_fsm <= s0;
+        end
+        
+        else begin  // not reset
+
+            if (processing_huge_page_2) begin
+                address_to_notify_huge_page_2 <= current_huge_page_addr;
+            end
+            if (read_chunk && read_chunk_ack && processing_huge_page_2) begin
+                commulative_rd_data_huge_page_2 <= commulative_rd_data_huge_page_2 + qwords_to_rd;
+            end
+            if (completion_received_huge_page_2 && completion_received) begin
+                commulative_received_data_huge_page_2 <= commulative_received_data_huge_page_2 + qwords_on_tlp;
+            end
+
+            case (huge_page_2_notifications_fsm)
+
+                s0 : begin
+                    if (commulative_rd_data_huge_page_2 != commulative_received_data_huge_page_2) begin
+                        huge_page_2_notifications_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    if (commulative_rd_data_huge_page_2 == commulative_received_data_huge_page_2) begin
+                        send_notification_huge_page_2 <= 1'b1;
+                        huge_page_2_notifications_fsm <= s2;
+                    end
+                end
+
+                s2 : begin
+                    if (send_notification_huge_page_2_ack) begin
+                        send_notification_huge_page_2 <= 1'b0;
+                        huge_page_2_notifications_fsm <= s0;
+                    end
+                end
+
+                default : begin
+                    huge_page_2_notifications_fsm <= s0;
                 end
 
             endcase
@@ -410,6 +614,8 @@ module tx_wr_pkt_to_bram (
             case (wr_to_bram_fsm)
 
                 s0 : begin
+                    completion_received_huge_page_1 <= 1'b0;
+                    completion_received_huge_page_2 <= 1'b0;
                     qwords_on_tlp <= trn_rd[41:33];
                     wr_addr_updated_internal <= 1'b1;
                     commited_wr_addr <= look_ahead_wr_addr;
@@ -423,6 +629,12 @@ module tx_wr_pkt_to_bram (
                 s1 : begin
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
                         aux <= trn_rd[31:0];
+                        if (!trn_rd[44]) begin
+                            completion_received_huge_page_1 <= 1'b1;
+                        end
+                        else begin
+                            completion_received_huge_page_2 <= 1'b1;
+                        end
                         wr_to_bram_fsm <= s2;
                     end
                 end

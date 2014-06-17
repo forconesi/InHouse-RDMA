@@ -34,6 +34,10 @@ module tx_rd_host_mem (
     input                  send_huge_page_rd_completed,
     output reg             send_huge_page_rd_completed_ack,
 
+    input                  notify,
+    input       [63:0]     notification_message,
+    output reg             notify_ack,
+
     input                  send_interrupt,
     output reg             send_interrupt_ack,
 
@@ -69,10 +73,13 @@ module tx_rd_host_mem (
     //-------------------------------------------------------   
     reg     [14:0]  state;
     reg     [63:0]  host_mem_addr;
-    reg     [31:0]  tlp_number;
+    reg     [4:0]   tlp_tag;
+    reg     [3:0]   next_tlp_tag;
     reg     [63:0]  next_completed_buffer_address;
+    reg     [63:0]  last_completed_buffer_address;
     reg     [31:0]  huge_page_index;
     reg     [31:0]  next_huge_page_index;
+    reg     [63:0]  notification_message_reg;
 
     assign reset_n = ~trn_lnk_up_n;
     
@@ -89,12 +96,14 @@ module tx_rd_host_mem (
             trn_teof_n <= 1'b1;
             trn_tsrc_rdy_n <= 1'b1;
             cfg_interrupt_n <= 1'b1;
-            tlp_number <= 32'b0;
+            tlp_tag <= 'b0;
+            next_tlp_tag <= 'b0;
 
             read_chunk_ack <= 1'b0;
             send_huge_page_rd_completed_ack <= 1'b0;
             huge_page_index <= 'b0;
             send_interrupt_ack <= 1'b0;
+            notify_ack <= 1'b0;
 
             driving_interface <= 1'b0;
             state <= s0;
@@ -105,21 +114,18 @@ module tx_rd_host_mem (
             read_chunk_ack <= 1'b0;
             send_huge_page_rd_completed_ack <= 1'b0;
             send_interrupt_ack <= 1'b0;
+            notify_ack <= 1'b0;
 
             case (state)
 
                 s0 : begin
                     next_completed_buffer_address <= completed_buffer_address + {huge_page_index, 2'b00};
+                    last_completed_buffer_address <= completed_buffer_address + 4'b1000;
                     driving_interface <= 1'b0;
                     host_mem_addr <= huge_page_addr;
+                    notification_message_reg <= notification_message;
                     if (my_turn) begin
-                        if (send_interrupt) begin
-                            cfg_interrupt_n <= 1'b0;
-                            driving_interface <= 1'b1;
-                            send_interrupt_ack <= 1'b1;
-                            state <= s8;
-                        end
-                        else if ( (trn_tbuf_av[0]) && (!trn_tdst_rdy_n) ) begin          // credits available and endpointready and myturn
+                        if ( (trn_tbuf_av[0]) && (!trn_tdst_rdy_n) ) begin          // credits available and endpointready and myturn
                             if (read_chunk) begin
                                 driving_interface <= 1'b1;
                                 read_chunk_ack <= 1'b1;
@@ -129,6 +135,17 @@ module tx_rd_host_mem (
                                 driving_interface <= 1'b1;
                                 send_huge_page_rd_completed_ack <= 1'b1;
                                 state <= s4;
+                            end
+                            else if (notify) begin
+                                driving_interface <= 1'b1;
+                                notify_ack <= 1'b1;
+                                state <= s9;
+                            end
+                            else if (send_interrupt) begin
+                                cfg_interrupt_n <= 1'b0;
+                                driving_interface <= 1'b1;
+                                send_interrupt_ack <= 1'b1;
+                                state <= s8;
                             end
                         end
                     end
@@ -150,18 +167,19 @@ module tx_rd_host_mem (
                             };
                     trn_td[31:0] <= {
                                 cfg_completer_id,   //Requester ID
-                                {4'b0, tlp_number[3:0] },   //Tag
+                                {3'b0, tlp_tag },   //Tag
                                 4'hF,   //last DW byte enable
                                 4'hF    //1st DW byte enable
                             };
                     trn_tsof_n <= 1'b0;
                     trn_tsrc_rdy_n <= 1'b0;
-                    tlp_number <= tlp_number +1;
+                    next_tlp_tag <= next_tlp_tag +1;
                     
                     state <= s2;
                 end
 
                 s2 : begin
+                    tlp_tag[3:0] <= next_tlp_tag;
                     if (!trn_tdst_rdy_n) begin
                         trn_tsof_n <= 1'b1;
                         trn_teof_n <= 1'b0;
@@ -203,7 +221,8 @@ module tx_rd_host_mem (
                             };
                     trn_tsof_n <= 1'b0;
                     trn_tsrc_rdy_n <= 1'b0;
-                    tlp_number <= 32'b0;
+                    tlp_tag[4] <= ~tlp_tag[4];
+                    next_tlp_tag <= 'b0;
                     
                     state <= s5;
                 end
@@ -243,6 +262,49 @@ module tx_rd_host_mem (
                         cfg_interrupt_n <= 1'b1;
                         driving_interface <= 1'b0;
                         state <= s0;
+                    end
+                end
+
+                s9 : begin
+                    trn_trem_n <= 8'b0;
+                    trn_td[63:32] <= {
+                                1'b0,   //reserved
+                                `TX_MEM_WR64_FMT_TYPE, //memory write request 64bit addressing
+                                1'b0,   //reserved
+                                3'b0,   //TC (traffic class)
+                                4'b0,   //reserved
+                                1'b0,   //TD (TLP digest present)
+                                1'b0,   //EP (poisoned data)
+                                2'b00,  //Relaxed ordering, No spoon in processor cache
+                                2'b0,   //reserved
+                                10'h02  //lenght equal 2 DW 
+                            };
+                    trn_td[31:0] <= {
+                                cfg_completer_id,   //Requester ID
+                                {4'b0, 4'b0 },   //Tag
+                                4'hF,   //last DW byte enable
+                                4'hF    //1st DW byte enable
+                            };
+                    trn_tsof_n <= 1'b0;
+                    trn_tsrc_rdy_n <= 1'b0;
+                    
+                    state <= s10;
+                end
+
+                s10 : begin
+                    if (!trn_tdst_rdy_n) begin
+                        trn_tsof_n <= 1'b1;
+                        trn_td <= last_completed_buffer_address;
+                        state <= s11;
+                    end
+                end
+
+                s11 : begin
+                    if (!trn_tdst_rdy_n) begin
+                        trn_td <= notification_message_reg;
+                        trn_trem_n <= 8'h00;
+                        trn_teof_n <= 1'b0;
+                        state <= s7;
                     end
                 end
 
