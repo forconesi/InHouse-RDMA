@@ -302,6 +302,7 @@ module tx_rd_host_mem (
                 s11 : begin
                     if (!trn_tdst_rdy_n) begin
                         trn_td <= notification_message_reg;
+                        trn_td <= {notification_message_reg[7:0], notification_message_reg[15:8], notification_message_reg[23:16], notification_message_reg[31:24], notification_message_reg[39:32], notification_message_reg[47:40], notification_message_reg[55:48], notification_message_reg[63:56]};
                         trn_trem_n <= 8'h00;
                         trn_teof_n <= 1'b0;
                         state <= s7;
