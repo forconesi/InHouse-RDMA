@@ -175,6 +175,7 @@ static void inc_cons(struct nf10_adapter *adapter, int rx)
 static int add_to_pending_gc_list(struct desc *desc)
 {
 	struct pending_gc_desc *pdesc;
+	unsigned long flags;
 
 	if ((pdesc = kmem_cache_alloc(pending_gc_cache, GFP_ATOMIC)) == NULL) {
 		pr_err("Error: failed to alloc pdesc causing memory leak\n");
@@ -183,11 +184,30 @@ static int add_to_pending_gc_list(struct desc *desc)
 
 	pdesc->desc = *desc;	/* copy */
 
-	spin_lock(&pending_gc_lock);
+	/* irq must be disabled since tx irq handling can call this function */
+	spin_lock_irqsave(&pending_gc_lock, flags);
 	list_add_tail(&pdesc->list, &pending_gc_head);
-	spin_unlock(&pending_gc_lock);
+	spin_unlock_irqrestore(&pending_gc_lock, flags);
 
 	return 0;
+}
+
+static void free_pdesc(struct nf10_adapter *adapter,
+		       struct pending_gc_desc *pdesc)
+{
+	struct desc *desc = &pdesc->desc;
+	BUG_ON(!desc || !desc->kern_addr);
+
+	/* FIXME: skb-to-desc - currently, assume one skb per desc */
+	BUG_ON(desc->skb->data != desc->kern_addr);
+
+	/* FIXME: skb-to-desc - skb->len will be changed */
+	pci_unmap_single(adapter->pdev, desc->dma_addr, desc->skb->len,
+			 PCI_DMA_TODEVICE);
+
+	dev_kfree_skb_any(desc->skb);
+
+	kmem_cache_free(pending_gc_cache, pdesc);
 }
 
 static void check_tx_completion(struct nf10_adapter *adapter)
@@ -626,6 +646,7 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 	pr_debug("\t-> len=%u, head=%p, data=%p, nr_qwords=%u, addr=0x%x, stat=0x%x\n",
 		 skb->len, skb->head, skb->data, nr_qwords, tx_addr_off(tx_prod), tx_stat_off(tx_prod));
 
+	/* FIXME: skb-to-desc */
 	desc->kern_addr = skb->data;
 	desc->skb = skb;
 	desc->dma_addr = pci_map_single(adapter->pdev, skb->data, skb->len,
@@ -637,19 +658,37 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 
 	inc_prod(adapter, TX);
 
-	/****** TEST *******/
-	udelay(1000);
-	pci_unmap_single(adapter->pdev, desc->dma_addr, skb->len,
-			 PCI_DMA_TODEVICE);
-	dev_kfree_skb_any(skb);
-
 	return NETDEV_TX_OK;
 }
 
 static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
 {
-	u64 *tx_last_gc_addr = get_tx_last_gc_addr();
-	pr_debug("tx-irq: gc_addr=%llx\n", *tx_last_gc_addr);
+	u64 *tx_last_gc_addr_ptr = get_tx_last_gc_addr();
+	dma_addr_t tx_last_gc_addr = *tx_last_gc_addr_ptr;
+	struct pending_gc_desc *pdesc, *_pdesc;
+	unsigned long flags;
+
+	/* TODO: optimization possible in case where one-by-one tx/completion,
+	 * we can avoid add and delete to-be-cleaned desc to/from gc list */
+
+	check_tx_completion(adapter);
+
+	pr_debug("tx-irq: gc_addr=%p\n", (void *)tx_last_gc_addr);
+
+	/* no gc buffer updated */
+	if (tx_last_gc_addr == 0)
+		return 0;
+	
+	spin_lock_irqsave(&pending_gc_lock, flags);
+	list_for_each_entry_safe(pdesc, _pdesc, &pending_gc_head, list) {
+		list_del(&pdesc->list);
+		free_pdesc(adapter, pdesc);
+		if (pdesc->desc.dma_addr == tx_last_gc_addr) {
+			pr_debug("[txdebug] meet gc addr and exit\n");
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&pending_gc_lock, flags);
 
 	return 1;
 }
