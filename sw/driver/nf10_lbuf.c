@@ -13,10 +13,14 @@ struct desc {
 	dma_addr_t	dma_addr;
 	struct sk_buff	*skb;
 };
+#define clean_desc(desc)	\
+	do { desc->kern_addr = NULL; } while(0)
 
 struct large_buffer {
 	struct desc descs[2][NR_LBUF];	/* 0=TX and 1=RX */
 	unsigned int prod[2], cons[2];
+
+	/* tx completion buffer */
 	void *tx_completion_kern_addr;
 	dma_addr_t tx_completion_dma_addr;
 };
@@ -36,6 +40,16 @@ static struct lbuf_hw {
 #ifdef CONFIG_SKBPOOL
 #define get_rxq()	(&lbuf_hw.rxq)
 #endif
+
+/* garbage collection of tx buffer */
+LIST_HEAD(pending_gc_head);
+spinlock_t pending_gc_lock;
+struct pending_gc_desc {
+	struct list_head list;
+	struct desc desc;
+};
+static struct kmem_cache *pending_gc_cache;
+#define get_tx_last_gc_addr()	(lbuf_hw.lbuf.tx_completion_kern_addr + TX_LAST_GC_ADDR_OFFSET)
 
 /* profiling memcpy performance */
 #ifdef CONFIG_PROFILE
@@ -158,6 +172,24 @@ static void inc_cons(struct nf10_adapter *adapter, int rx)
 	inc_pointer(lbuf->cons[rx]);
 }
 
+static int add_to_pending_gc_list(struct desc *desc)
+{
+	struct pending_gc_desc *pdesc;
+
+	if ((pdesc = kmem_cache_alloc(pending_gc_cache, GFP_ATOMIC)) == NULL) {
+		pr_err("Error: failed to alloc pdesc causing memory leak\n");
+		return -ENOMEM;
+	}
+
+	pdesc->desc = *desc;	/* copy */
+
+	spin_lock(&pending_gc_lock);
+	list_add_tail(&pdesc->list, &pending_gc_head);
+	spin_unlock(&pending_gc_lock);
+
+	return 0;
+}
+
 static void check_tx_completion(struct nf10_adapter *adapter)
 {
 	struct large_buffer *lbuf = get_lbuf();
@@ -166,15 +198,18 @@ static void check_tx_completion(struct nf10_adapter *adapter)
 
 	while (desc_empty(adapter, TX) == false &&
 	       completion[tx_cons] == TX_COMPLETION_OKAY) {
+		struct desc *desc = &lbuf->descs[TX][tx_cons];
 
-		/* TODO: add skb to gc list */
+		add_to_pending_gc_list(desc);
+		pr_debug("clean tx[%u]: dma_addr/kern_addr/skb=%p/%p/%p\n",
+			 tx_cons, (void *)desc->dma_addr, desc->kern_addr, desc->skb);
 
-		lbuf->descs[TX][tx_cons].kern_addr = NULL;
+		/* clean */
+		clean_desc(desc);
 		completion[tx_cons] = 0;
+
+		/* update cons */
 		inc_cons(adapter, TX);
-
-		pr_debug("clean tx[%u->%u]\n", tx_cons, lbuf->cons[TX]);
-
 		tx_cons = lbuf->cons[TX];
 	}
 	pr_debug("%s: tx[%u] - empty=%d completion=0x%x\n", __func__,
@@ -460,6 +495,13 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 		return err;
 	}
 #endif
+	pending_gc_cache = kmem_cache_create("pending_gc_desc",
+					     sizeof(struct pending_gc_desc),
+					     __alignof__(struct pending_gc_desc),
+					     0, NULL);
+	if (!pending_gc_cache)
+		return -ENOMEM;
+
 	lbuf_hw.adapter = adapter;
 	adapter->user_ops = &lbuf_user_ops;
 
@@ -474,6 +516,7 @@ static void nf10_lbuf_free(struct nf10_adapter *adapter)
 	skbpool_destroy();
 	destroy_workqueue(lbuf_hw.rx_wq);
 #endif
+	kmem_cache_destroy(pending_gc_cache);
 }
 
 static int nf10_lbuf_init_buffers(struct nf10_adapter *adapter)
@@ -605,8 +648,9 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 
 static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
 {
-	/* TODO */
-	pr_debug("tx: clean\n");
+	u64 *tx_last_gc_addr = get_tx_last_gc_addr();
+	pr_debug("tx-irq: gc_addr=%llx\n", *tx_last_gc_addr);
+
 	return 1;
 }
 
