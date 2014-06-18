@@ -52,6 +52,8 @@ struct pending_gc_desc {
 static struct kmem_cache *pending_gc_cache;
 #define get_tx_last_gc_addr()	(lbuf_hw.lbuf.tx_completion_kern_addr + TX_LAST_GC_ADDR_OFFSET)
 
+static unsigned long debug_count;	/* for debug */
+
 /* profiling memcpy performance */
 #ifdef CONFIG_PROFILE
 /* WARN: note that it does not do bound check for performance */
@@ -196,12 +198,14 @@ static void free_pdesc(struct nf10_adapter *adapter,
 	struct desc *desc = &pdesc->desc;
 
 	BUG_ON(!desc);
-	////BUG_ON(!desc->kern_addr);
 
-	/* FIXME: skb-to-desc - currently, assume one skb per desc */
-	////BUG_ON(desc->skb->data != desc->kern_addr);
 	if (desc->skb->data != desc->kern_addr)
 		pr_err("Error: skb->data=%p != kern_addr=%p\n", desc->skb->data, desc->kern_addr);
+
+	BUG_ON(!desc->kern_addr);
+
+	/* FIXME: skb-to-desc - currently, assume one skb per desc */
+	BUG_ON(desc->skb->data != desc->kern_addr);
 
 	pr_debug("gctx: dma_addr=%p skb=%p\n", (void *)desc->dma_addr, desc->skb);
 
@@ -244,8 +248,8 @@ static void check_tx_completion(struct nf10_adapter *adapter)
 		struct desc *desc = &lbuf->descs[TX][tx_cons];
 
 		add_to_pending_gc_list(desc);
-		pr_debug("clean tx[%u]: dma_addr/kern_addr/skb=%p/%p/%p\n",
-			 tx_cons, (void *)desc->dma_addr, desc->kern_addr, desc->skb);
+		pr_debug("cltx[%u]: desc=%p dma_addr/kern_addr/skb=%p/%p/%p\n",
+			 tx_cons, desc, (void *)desc->dma_addr, desc->kern_addr, desc->skb);
 
 		/* clean */
 		clean_desc(desc);
@@ -256,8 +260,10 @@ static void check_tx_completion(struct nf10_adapter *adapter)
 		inc_cons(adapter, TX);
 		tx_cons = lbuf->cons[TX];
 	}
-	pr_debug("%s: tx[c=%u:p=%u] - empty=%d completion=[%x:%x] kern_addr=%llx\n", __func__,
-		 tx_cons, lbuf->prod[TX], desc_empty(adapter, TX), completion[0], completion[1], (u64)lbuf->descs[TX][tx_cons].kern_addr);
+	if (!debug_count || debug_count >> 13)
+		pr_debug("chktx[c=%u:p=%u] - desc=%p empty=%d completion=[%x:%x] dma_addr/kern_addr/skb=%p/%p/%p\n",
+		 tx_cons, lbuf->prod[TX], &lbuf->descs[TX][tx_cons], desc_empty(adapter, TX), completion[0], completion[1],
+		 (void *)lbuf->descs[TX][tx_cons].dma_addr, lbuf->descs[TX][tx_cons].kern_addr, lbuf->descs[TX][tx_cons].skb);
 }
 
 static void enable_tx_intr(struct nf10_adapter *adapter)
@@ -649,18 +655,22 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 	check_tx_completion(adapter);
 
 	if (desc_full(adapter, TX)) {
-		pr_warn("WARN: tx desc is full!\n");
+		if (++debug_count >> 13) {
+			pr_warn("WARN: tx desc is full! (%lu)\n", debug_count);
+			debug_count = 0;
+		}
 #if 0	/* TODO */
 		netif_stop_queue(dev);
 #endif
 		spin_unlock_irqrestore(&tx_lock, flags);
 		return NETDEV_TX_BUSY;
 	}
+	debug_count = 0;
 
 	tx_prod = lbuf->prod[TX];
 	desc = &lbuf->descs[TX][tx_prod];
 
-	pr_debug("tx[%u]: len=%u, head=%p, data=%p\n", tx_prod, skb->len, skb->head, skb->data);
+	////pr_debug("tx[%u]: len=%u, head=%p, data=%p\n", tx_prod, skb->len, skb->head, skb->data);
 
 	/* TODO: check availability */
 
@@ -674,15 +684,23 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 
 	nr_qwords = ALIGN(skb->len, 8) >> 3;
 
-	pr_debug("\t-> len=%u, head=%p, data=%p, nr_qwords=%u, addr=0x%x, stat=0x%x\n",
-		 skb->len, skb->head, skb->data, nr_qwords, tx_addr_off(tx_prod), tx_stat_off(tx_prod));
-
 	/* FIXME: skb-to-desc */
-	desc->kern_addr = skb->data;
-	desc->skb = skb;
 	desc->dma_addr = pci_map_single(adapter->pdev, skb->data, skb->len,
 					PCI_DMA_TODEVICE);
+	if (pci_dma_mapping_error(adapter->pdev, desc->dma_addr)) {
+		netif_err(adapter, probe, adapter->netdev,
+			  "failed to map to dma addr (kern_addr=%p)\n",
+			  desc->kern_addr);
+		spin_unlock_irqrestore(&tx_lock, flags);
+		return NETDEV_TX_BUSY;
+	}
+	desc->kern_addr = skb->data;
+	desc->skb = skb;
 	/* TODO: check dma map error */
+
+	pr_debug("\trqtx[%u]: desc=%p len=%u, head=%p, dma_addr/kern_addr/skb=%p/%p/%p, nr_qwords=%u, addr=0x%x, stat=0x%x\n",
+		 tx_prod, desc, skb->len, skb->head, (void *)desc->dma_addr, desc->kern_addr, desc->skb,
+		 nr_qwords, tx_addr_off(tx_prod), tx_stat_off(tx_prod));
 
 	nf10_writeq(adapter, tx_addr_off(tx_prod), desc->dma_addr);
 	nf10_writel(adapter, tx_stat_off(tx_prod), nr_qwords);
@@ -700,6 +718,8 @@ static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
 	dma_addr_t tx_last_gc_addr;
 	int complete;
 	unsigned long flags;
+
+	return 1;
 
 	/* TODO: optimization possible in case where one-by-one tx/completion,
 	 * we can avoid add and delete to-be-cleaned desc to/from gc list */
