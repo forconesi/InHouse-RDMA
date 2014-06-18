@@ -394,7 +394,7 @@ module my_top (
 
     // MAC Configuration
     // Tx interface disabled
-    assign mac_tx_underrun = 1'b0;
+    //assign mac_tx_underrun = 1'b0;
     //assign mac_tx_data = 64'b0;
     //assign mac_tx_data_valid = 8'b0;
     //assign mac_tx_start = 1'b0;
@@ -514,6 +514,7 @@ module my_top (
     tx_mac_interface tx_mac_interface_mod (
         .clk(xaui_clk_156_25_out),                       // I
         .reset_n(reset_n),                     // I
+        .tx_underrun(mac_tx_underrun),         // O
         .tx_data(mac_tx_data),                 // O [63:0]
         .tx_data_valid(mac_tx_data_valid),     // O [7:0]
         .tx_start(mac_tx_start),               // O
