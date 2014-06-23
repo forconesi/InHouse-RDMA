@@ -161,7 +161,7 @@ module tx_rd_host_mem (
                                 4'b0,   //reserved
                                 1'b0,   //TD (TLP digest present)
                                 1'b0,   //EP (poisoned data)
-                                2'b10,  //Relaxed ordering, No spoon in processor cache
+                                2'b00,  //Relaxed ordering, No spoon in processor cache
                                 2'b0,   //reserved
                                 {qwords_to_rd, 1'b0}          //10'h080   //lenght in DWs. 10-bit field 128DWs == 512 bytes
                             };
