@@ -144,19 +144,31 @@ module tx_wr_pkt_to_bram (
     // Local pulse generation for 156.25 MHz domain
     //-------------------------------------------------------
     reg     [14:0]  pulse_gen_fsm1;
+    reg     [1:0]   wait_gap;
+    reg     [`BF:0] commited_wr_addr_aux0;
+    reg     [`BF:0] commited_wr_addr_aux1;
 
     //-------------------------------------------------------
     // Local completion_tlp & write to bram (wr_to_bram_fsm)
     //-------------------------------------------------------
     reg     [14:0]  wr_to_bram_fsm;
-    reg             wr_addr_updated_internal;
     reg     [8:0]   qwords_on_tlp;
     reg             completion_received;
     reg             completion_received_huge_page_1;
     reg             completion_received_huge_page_2;
     reg     [31:0]  aux;
     reg     [`BF:0] look_ahead_wr_addr;
-    
+    reg     [`BF:0] commited_wr_addr_internal;
+    ////////////////////////////////////////////////
+    // INSTRUMENTATION
+    ////////////////////////////////////////////////
+    `ifdef INSTRUMENTATION
+    (* KEEP = "TRUE" *)reg             error;
+    `endif
+    ////////////////////////////////////////////////
+    // INSTRUMENTATION
+    ////////////////////////////////////////////////
+
     assign reset_n = ~trn_lnk_up_n;
 
     ////////////////////////////////////////////////
@@ -298,7 +310,7 @@ module tx_wr_pkt_to_bram (
 
                 s1 : begin
                     qwords_to_rd <= remaining_qwords[31:6] ? 'h040 : {2'b0, remaining_qwords[5:0]};
-                    if (diff < 'h1C0) begin
+                    if (diff < 'h1B0) begin
                         read_chunk <= 1'b1;
                         trigger_rd_tlp_fsm <= s2;
                     end
@@ -569,21 +581,48 @@ module tx_wr_pkt_to_bram (
     always @( posedge trn_clk or negedge reset_n ) begin
         
         if (!reset_n ) begin  // reset
+            commited_wr_addr <= 'b0;
             wr_addr_updated <= 1'b0;
+            commited_wr_addr_aux1 <= 'b0;
             pulse_gen_fsm1 <= s0;
         end
         else begin  // not reset
 
             case (pulse_gen_fsm1)
+                
                 s0 : begin
-                    wr_addr_updated <= 1'b0;
-                    if (wr_addr_updated_internal) begin
-                        wr_addr_updated <= 1'b1;
+                    if (commited_wr_addr_internal != commited_wr_addr_aux1) begin
+                        commited_wr_addr_aux0 <= commited_wr_addr_internal;
                         pulse_gen_fsm1 <= s1;
                     end
+                    wait_gap <= 'h1;
                 end
-                s1 : pulse_gen_fsm1 <= s2;
-                s2 : pulse_gen_fsm1 <= s0;
+
+                s1 : begin
+                    commited_wr_addr <= commited_wr_addr_aux0;
+                    commited_wr_addr_aux1 <= commited_wr_addr_aux0;
+                    pulse_gen_fsm1 <= s2;
+                end
+
+                s2 : begin
+                    wr_addr_updated <= 1'b1;
+                    pulse_gen_fsm1 <= s3;
+                end
+
+                s3 : pulse_gen_fsm1 <= s4;
+                s4 : pulse_gen_fsm1 <= s5;
+
+                s5 : begin
+                    wr_addr_updated <= 1'b0;
+                    wait_gap <= wait_gap +1;
+                    if (!wait_gap) begin
+                        pulse_gen_fsm1 <= s0;
+                    end
+                end
+
+                default : begin
+                    pulse_gen_fsm1 <= s0;
+                end
             endcase
 
         end     // not reset
@@ -598,18 +637,34 @@ module tx_wr_pkt_to_bram (
         if (!reset_n ) begin  // reset
             wr_addr <= 'b0;
             look_ahead_wr_addr <= 'b0;
-            commited_wr_addr <= 'b0;
+            commited_wr_addr_internal <= 'b0;
             completion_received <= 1'b0;
             wr_en <= 1'b1;
+            error <= 1'b0;
             wr_to_bram_fsm <= s0;
         end
         
         else begin  // not reset
 
-            wr_addr_updated_internal <= 1'b0;
             wr_addr <= look_ahead_wr_addr;
             wr_en <= 1'b1;
             completion_received <= 1'b0;
+
+
+////////////////////////////////////////////////
+// INSTRUMENTATION
+////////////////////////////////////////////////
+`ifdef INSTRUMENTATION
+
+            if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n)) begin
+                if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] != `SC) ) begin
+                    error <= 1'b1;
+                end
+            end
+`endif
+////////////////////////////////////////////////
+// INSTRUMENTATION
+////////////////////////////////////////////////
 
             case (wr_to_bram_fsm)
 
@@ -617,8 +672,7 @@ module tx_wr_pkt_to_bram (
                     completion_received_huge_page_1 <= 1'b0;
                     completion_received_huge_page_2 <= 1'b0;
                     qwords_on_tlp <= trn_rd[41:33];
-                    wr_addr_updated_internal <= 1'b1;
-                    commited_wr_addr <= look_ahead_wr_addr;
+                    commited_wr_addr_internal <= look_ahead_wr_addr;
                     if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n)) begin
                         if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] == `SC) ) begin
                             wr_to_bram_fsm <= s1;
