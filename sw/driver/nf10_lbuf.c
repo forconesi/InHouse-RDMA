@@ -399,8 +399,6 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	u8 bytes_remainder;
 	struct net_device *netdev = adapter->netdev;
 	struct sk_buff *skb;
-	struct large_buffer *lbuf = get_lbuf();
-	unsigned int rx_cons = lbuf->cons[RX];
 	unsigned int rx_packets = 0;
 	unsigned int data_len;
 #ifdef CONFIG_SKBPOOL
@@ -414,7 +412,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	    max_dword_idx > 524288) {	/* FIXME: replace constant */
 		netif_err(adapter, rx_err, netdev,
 			  "rx_cons=%d's header contains invalid # of qwords=%u",
-			  rx_cons, nr_qwords);
+			  rx_cons(), nr_qwords);
 		return -1;
 	}
 
@@ -432,7 +430,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		if (unlikely(pkt_len < 60 || pkt_len > 1518)) {	
 			netif_err(adapter, rx_err, netdev,
 				  "rx_cons=%d lbuf contains invalid pkt len=%u",
-				  rx_cons, pkt_len);
+				  rx_cons(), pkt_len);
 			goto next_pkt;
 		}
 		data_len = pkt_len - 4;
@@ -444,7 +442,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		if ((skb = netdev_alloc_skb(netdev, data_len)) == NULL) {
 #endif
 			netif_err(adapter, rx_err, netdev,
-				  "rx_cons=%d failed to alloc skb", rx_cons);
+				  "rx_cons=%d failed to alloc skb", rx_cons());
 			goto next_pkt;
 		}
 		STOP_TIMESTAMP(0);
@@ -608,21 +606,36 @@ static int nf10_lbuf_napi_budget(void)
 	return 2;
 }
 
+static int consume_rx_desc(struct desc *desc)
+{
+	if (rx_desc_empty())
+		return -1;
+
+	/* copy metadata to allow for further producing rx buffer */
+	*desc = *rx_cons_desc();
+	clean_desc(rx_cons_desc());
+	inc_rx_cons();
+
+	return 0;
+}
+
 static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter, 
 				     int *work_done, int budget)
 {
-	struct large_buffer *lbuf = get_lbuf();
-	unsigned int rx_cons = rx_cons();
-	struct desc *cur_rx_desc = &lbuf->descs[RX][rx_cons];
-	struct desc rx_desc = *cur_rx_desc;	/* copy */
+	struct desc desc;
 
-	return;
+	if (consume_rx_desc(&desc))
+		return;		/* nothing to process */
 
-	alloc_and_map_lbuf(adapter, cur_rx_desc, RX);
-	nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_cons);
+	/* for now with strong assumption where processing one lbuf at a time
+	 * refill a single rx buffer */
+	if (likely(!rx_desc_full())) {
+		alloc_and_map_lbuf(adapter, rx_prod_desc(), RX);
+		nf10_lbuf_prepare_rx(adapter, (unsigned long)rx_prod());
+	}
 
 #ifndef CONFIG_LBUF_COHERENT
-	pci_dma_sync_single_for_cpu(adapter->pdev, rx_desc.dma_addr,
+	pci_dma_sync_single_for_cpu(adapter->pdev, desc.dma_addr,
 				    LBUF_SIZE, PCI_DMA_FROMDEVICE);
 #endif
 	/* if a user process can handle it, pass it up and return */
@@ -633,11 +646,11 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	/* if failed to deliver to frontend, fallback with host processing.
 	 * currently, domid is set as an arbitrary number (1), since we don't
 	 * have packet classification in hardware right now */
-	if (xenvif_rx_action(1 /* FIXME */, rx_desc.kern_addr, LBUF_SIZE))
+	if (xenvif_rx_action(1 /* FIXME */, desc.kern_addr, LBUF_SIZE))
 #endif
 	/* currently, just process one large buffer, regardless of budget */
-	nf10_lbuf_deliver_skbs(adapter, rx_desc.kern_addr);
-	unmap_and_free_lbuf(adapter, &rx_desc, RX);
+	nf10_lbuf_deliver_skbs(adapter, desc.kern_addr);
+	unmap_and_free_lbuf(adapter, &desc, RX);
 	*work_done = 1;
 }
 
