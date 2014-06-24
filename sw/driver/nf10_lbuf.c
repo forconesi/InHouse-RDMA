@@ -133,8 +133,7 @@ static inline void __free_lbuf(struct nf10_adapter *adapter,
 #ifndef CONFIG_LBUF_COHERENT
 	__free_pages(virt_to_page(kern_addr), LBUF_ORDER);
 #else
-	pci_free_consistent(adapter->pdev, LBUF_SIZE, kern_addr,
-			    dma_addr ? dma_addr : virt_to_bus(kern_addr));
+	pci_free_consistent(adapter->pdev, LBUF_SIZE, kern_addr, dma_addr);
 #endif
 
 }
@@ -327,10 +326,10 @@ static void nf10_lbuf_prepare_rx(struct nf10_adapter *adapter, unsigned long idx
 
 	netif_dbg(adapter, rx_status, adapter->netdev,
 		  "RX lbuf[%lu] is prepared to nf10\n", idx);
-	if (unlikely((unsigned int)idx != rx_cons()))
+	if (unlikely((unsigned int)idx != rx_prod()))
 		netif_warn(adapter, rx_status, adapter->netdev,
-			   "prepared idx(=%lu) mismatches rx_cons=%u\n",
-			   idx, rx_cons());
+			   "prepared idx(=%lu) mismatches rx_prod=%u\n",
+			   idx, rx_prod());
 
 	inc_rx_prod();
 }
@@ -658,7 +657,7 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	/* if failed to deliver to frontend, fallback with host processing.
 	 * currently, domid is set as an arbitrary number (1), since we don't
 	 * have packet classification in hardware right now */
-	if (xenvif_start_xmit(1 /* FIXME */, desc.kern_addr, LBUF_SIZE) == 0) {
+	if (xenvif_start_xmit(1 /* FIXME */, desc.kern_addr, desc.dma_addr, LBUF_SIZE) == 0) {
 		*work_done = 1;
 		return;
 	}
@@ -743,21 +742,19 @@ static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
 	int complete;
 	unsigned long flags;
 
+	pr_debug("tx-irq: gc_addr=%p\n", (void *)(*tx_last_gc_addr_ptr));
+
+	/* no gc buffer updated */
+	if (*tx_last_gc_addr_ptr == 0)
+		return 1;	/* clean complete */
+
 	/* TODO: optimization possible in case where one-by-one tx/completion,
 	 * we can avoid add and delete to-be-cleaned desc to/from gc list */
 again:
 	spin_lock_irqsave(&tx_lock, flags);
+
 	check_tx_completion();
-
 	tx_last_gc_addr = *tx_last_gc_addr_ptr;
-	pr_debug("tx-irq: gc_addr=%p\n", (void *)tx_last_gc_addr);
-
-	/* no gc buffer updated */
-	if (tx_last_gc_addr == 0) {
-		spin_unlock_irqrestore(&tx_lock, flags);
-		return 1;	/* clean complete */
-	}
-
 	complete = clean_tx_pending_gc(adapter, tx_last_gc_addr);
 
 	spin_unlock_irqrestore(&tx_lock, flags);

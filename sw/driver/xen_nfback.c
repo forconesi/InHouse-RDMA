@@ -83,9 +83,12 @@ struct backend_info {
 	u8 have_hotplug_status_watch:1;
 };
 
+/* XXX: dma_addr is for freeing coherent buf, 
+ * virt_to_bus cannot translate to right dma_addr in Xen */
 struct rx_buf {
 	struct list_head list;
 	void *addr;
+	dma_addr_t dma_addr;
 	u32 size;
 	u32 offset;
 };
@@ -98,8 +101,9 @@ static struct rx_buf *alloc_rx_buf(void)
 
 static void free_rx_buf(struct rx_buf *buf)
 {
+	pr_debug("%s: addr=%p dma_addr=%p\n", __func__, buf->addr, (void *)buf->dma_addr);
 	if (likely(buf->addr && host_adapter->xen_ops))
-		host_adapter->xen_ops->free_buffer(host_adapter, buf->addr, 0);
+		host_adapter->xen_ops->free_buffer(host_adapter, buf->addr, buf->dma_addr);
 	else
 		pr_warn("WARN: buffer is not be freed due to NULL or no xen_ops\n");
 	kmem_cache_free(rx_buf_cache, buf);
@@ -129,8 +133,10 @@ static struct rx_buf *rx_buf_dequeue(struct xenvif *vif)
 	struct rx_buf *buf = NULL;
 
 	spin_lock(&vif->rx_buf_lock);
-	if (!rx_buf_queue_empty(vif))
+	if (!rx_buf_queue_empty(vif)) {
 		buf = list_first_entry(&vif->rx_buf_head, struct rx_buf, list);
+		list_del(&buf->list);
+	}
 	spin_unlock(&vif->rx_buf_lock);
 
 	return buf;
@@ -897,9 +903,8 @@ static int xenvif_rx_action(struct xenvif *vif)
 			copy->dest.offset = 0;
 			copy->dest.u.ref = req->gref;
 #if 0
-			pr_debug("[copy_prod=%u] id=%u d%d->d%d addr=%p mfn=%lx bytes=%lu ref=%u\n",
-					req->id, copy_prod, DOMID_SELF, vif->domid, buf_addr,
-					copy->source.u.gmfn, bytes, req->gref);
+			pr_debug("[copy_prod=%u] id=%u d%d addr=%p mfn=%lx bytes=%lu ref=%u\n",
+				 copy_prod, req->id, vif->domid, buf_addr, copy->source.u.gmfn, bytes, req->gref);
 #endif
 		}
 
@@ -924,7 +929,7 @@ static int xenvif_rx_action(struct xenvif *vif)
 			need_to_notify |= !!ret;
 #if 0
 			pr_debug("[copy_cons=%u] id=%u status=%d bytes=%lu ret=%d need_to_notify=%d\n",
-					copy_cons, vif->meta[copy_cons].id, status, bytes, ret, need_to_notify);
+				 copy_cons, vif->meta[copy_cons].id, status, bytes, ret, need_to_notify);
 #endif
 		}
 		if (need_to_notify)
@@ -972,7 +977,8 @@ int xenvif_kthread(void *data)
 	return 0;
 }
 
-int xenvif_start_xmit(unsigned long domid, void *buf_addr, u32 size)
+int xenvif_start_xmit(unsigned long domid, void *buf_addr,
+		      dma_addr_t dma_addr, u32 size)
 {
 	struct xenvif *vif = FIXME_vif;	/* FIXME: dom-to-vif */
 	struct rx_buf *buf;
@@ -984,6 +990,7 @@ int xenvif_start_xmit(unsigned long domid, void *buf_addr, u32 size)
 		return -ENOMEM;
 
 	buf->addr = buf_addr;
+	buf->dma_addr = dma_addr;
 	buf->size = size;
 	buf->offset = 0;
 
