@@ -272,7 +272,7 @@ static int nf10_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	napi_enable(&adapter->napi);
 
 #ifdef CONFIG_XEN_NF_BACKEND
-	if (xen_nfback_init())
+	if (xen_nfback_init(adapter))
 		pr_warn("failed to init xen nfback\n");
 #endif
 

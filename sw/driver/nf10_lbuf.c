@@ -127,14 +127,21 @@ static inline void *alloc_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 	return desc->kern_addr;
 }
 
-static inline void free_lbuf(struct nf10_adapter *adapter, struct desc *desc)
+static inline void __free_lbuf(struct nf10_adapter *adapter,
+			       void *kern_addr, dma_addr_t dma_addr)
 {
 #ifndef CONFIG_LBUF_COHERENT
-	__free_pages(virt_to_page(desc->kern_addr), LBUF_ORDER);
+	__free_pages(virt_to_page(kern_addr), LBUF_ORDER);
 #else
-	pci_free_consistent(adapter->pdev, LBUF_SIZE,
-			    desc->kern_addr, desc->dma_addr);
+	pci_free_consistent(adapter->pdev, LBUF_SIZE, kern_addr,
+			    dma_addr ? dma_addr : virt_to_bus(kern_addr));
 #endif
+
+}
+
+static inline void free_lbuf(struct nf10_adapter *adapter, struct desc *desc)
+{
+	__free_lbuf(adapter, desc->kern_addr, desc->dma_addr);
 	/* TODO: if skb is not NULL, release it safely */
 }
 
@@ -521,6 +528,10 @@ static struct nf10_user_ops lbuf_user_ops = {
 	.prepare_rx_buffer	= nf10_lbuf_prepare_rx,
 };
 
+static struct nf10_xen_ops lbuf_xen_ops = {
+	.free_buffer		= __free_lbuf,
+};
+
 /* nf10_hw_ops functions */
 static int nf10_lbuf_init(struct nf10_adapter *adapter)
 {
@@ -553,6 +564,7 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 
 	lbuf_hw.adapter = adapter;
 	adapter->user_ops = &lbuf_user_ops;
+	adapter->xen_ops  = &lbuf_xen_ops;
 
 	return 0;
 }
@@ -646,7 +658,10 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	/* if failed to deliver to frontend, fallback with host processing.
 	 * currently, domid is set as an arbitrary number (1), since we don't
 	 * have packet classification in hardware right now */
-	if (xenvif_rx_action(1 /* FIXME */, desc.kern_addr, LBUF_SIZE))
+	if (xenvif_start_xmit(1 /* FIXME */, desc.kern_addr, LBUF_SIZE) == 0) {
+		*work_done = 1;
+		return;
+	}
 #endif
 	/* currently, just process one large buffer, regardless of budget */
 	nf10_lbuf_deliver_skbs(adapter, desc.kern_addr);

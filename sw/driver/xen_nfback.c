@@ -14,7 +14,11 @@
 #include <xen/interface/io/netif.h>	/* ring and gnttab */
 #include <linux/netdevice.h>		/* IFNAMSIZ */
 #include <asm/xen/page.h>		/* virt_to_mfn */
+#include <linux/kthread.h>		/* xenvif_kthread */
+#include "nf10.h"
 
+/* host adapter initialized in xen_nfback_init */
+static struct nf10_adapter *host_adapter;
 
 #define XEN_NETIF_TX_RING_SIZE __CONST_RING_SIZE(xen_netif_tx, PAGE_SIZE)
 #define XEN_NETIF_RX_RING_SIZE __CONST_RING_SIZE(xen_netif_rx, PAGE_SIZE)
@@ -36,6 +40,10 @@ struct xenvif {
 	char		name[IFNAMSIZ];
 	struct device	*parent_dev;
 
+	/* Use kthread for guest RX */
+	struct task_struct *task;
+	wait_queue_head_t wq;
+
 	/* When feature-split-event-channels = 0, tx_irq = rx_irq. */
 	unsigned int tx_irq;
 	/* Only used when feature-split-event-channels = 1 */
@@ -47,6 +55,10 @@ struct xenvif {
 	/* Only used when feature-split-event-channels = 1 */
 	char rx_irq_name[IFNAMSIZ+4]; /* DEVNAME-rx */
 	struct xen_netif_rx_back_ring rx;
+	struct list_head rx_buf_head;
+	spinlock_t rx_buf_lock;
+
+	RING_IDX rx_last_slots;
 
 	/* This array is allocated seperately as it is large */ 
 	struct gnttab_copy *grant_copy_op;
@@ -71,6 +83,64 @@ struct backend_info {
 	u8 have_hotplug_status_watch:1;
 };
 
+struct rx_buf {
+	struct list_head list;
+	void *addr;
+	u32 size;
+	u32 offset;
+};
+static struct kmem_cache *rx_buf_cache;
+
+static struct rx_buf *alloc_rx_buf(void)
+{
+	return kmem_cache_alloc(rx_buf_cache, GFP_ATOMIC);
+}
+
+static void free_rx_buf(struct rx_buf *buf)
+{
+	if (likely(buf->addr && host_adapter->xen_ops))
+		host_adapter->xen_ops->free_buffer(host_adapter, buf->addr, 0);
+	else
+		pr_warn("WARN: buffer is not be freed due to NULL or no xen_ops\n");
+	kmem_cache_free(rx_buf_cache, buf);
+}
+
+static int rx_buf_queue_empty(struct xenvif *vif)
+{
+	return list_empty(&vif->rx_buf_head);
+}
+
+static void rx_buf_queue_tail(struct xenvif *vif, struct rx_buf *buf)
+{
+	spin_lock(&vif->rx_buf_lock);
+	list_add_tail(&buf->list, &vif->rx_buf_head);
+	spin_unlock(&vif->rx_buf_lock);
+}
+
+static void rx_buf_queue_head(struct xenvif *vif, struct rx_buf *buf)
+{
+	spin_lock(&vif->rx_buf_lock);
+	list_add(&buf->list, &vif->rx_buf_head);
+	spin_unlock(&vif->rx_buf_lock);
+}
+
+static struct rx_buf *rx_buf_dequeue(struct xenvif *vif)
+{
+	struct rx_buf *buf = NULL;
+
+	spin_lock(&vif->rx_buf_lock);
+	if (!rx_buf_queue_empty(vif))
+		buf = list_first_entry(&vif->rx_buf_head, struct rx_buf, list);
+	spin_unlock(&vif->rx_buf_lock);
+
+	return buf;
+}
+
+void xenvif_kick_thread(struct xenvif *vif)
+{
+	wake_up(&vif->wq);
+}   
+
 static irqreturn_t xenvif_tx_interrupt(int irq, void *dev_id)
 {       
 #if 0
@@ -84,11 +154,9 @@ static irqreturn_t xenvif_tx_interrupt(int irq, void *dev_id)
 
 static irqreturn_t xenvif_rx_interrupt(int irq, void *dev_id)
 {       
-#if 0
 	struct xenvif *vif = dev_id;
 
 	xenvif_kick_thread(vif);
-#endif
 	return IRQ_HANDLED;
 }
 
@@ -122,6 +190,18 @@ struct xenvif *xenvif_alloc(struct device *parent, domid_t domid,
 	vif->domid  = domid;
 	vif->handle = handle;
 	vif->parent_dev = parent;
+
+	INIT_LIST_HEAD(&vif->rx_buf_head);
+	spin_lock_init(&vif->rx_buf_lock);
+	rx_buf_cache = kmem_cache_create("rx_buf",
+					sizeof(struct rx_buf),
+					__alignof__(struct rx_buf),
+					0, NULL);
+	if (rx_buf_cache == NULL) {
+		pr_err("failed to alloc rx_buf_cache for %s\n", vif->name);
+		kfree(vif);
+		return ERR_PTR(-ENOMEM);
+	}
 
 	pr_debug("Successfully created xenvif\n");
 #if 0
@@ -194,10 +274,12 @@ err:
 	return err;
 }
 
+int xenvif_kthread(void *data);
 int xenvif_connect(struct xenvif *vif, unsigned long tx_ring_ref,
 		unsigned long rx_ring_ref, unsigned int tx_evtchn,
 		unsigned int rx_evtchn)
 {
+	struct task_struct *task;
 	int err = -ENOMEM;
 
 	BUG_ON(vif->tx_irq);
@@ -205,6 +287,8 @@ int xenvif_connect(struct xenvif *vif, unsigned long tx_ring_ref,
 	err = xenvif_map_frontend_rings(vif, tx_ring_ref, rx_ring_ref);
 	if (err < 0)
 		goto err;
+
+	init_waitqueue_head(&vif->wq);
 
 	if (tx_evtchn == rx_evtchn) {
 		/* feature-split-event-channels == 0 */
@@ -238,13 +322,21 @@ int xenvif_connect(struct xenvif *vif, unsigned long tx_ring_ref,
 		disable_irq(vif->rx_irq);
 	}
 
+	task = kthread_create(xenvif_kthread, (void *)vif, "%s", vif->name);
+	if (IS_ERR(task)) {
+		pr_warn("Could not allocate kthread for %s\n", vif->name);
+		err = PTR_ERR(task);
+		goto err_rx_unbind;
+	}
+
+	vif->task = task;
+	wake_up_process(vif->task);
+
 	return 0;
 
-#if 0
 err_rx_unbind:
 	unbind_from_irqhandler(vif->rx_irq, vif);
 	vif->rx_irq = 0;
-#endif
 err_tx_unbind:
 	unbind_from_irqhandler(vif->tx_irq, vif);
 	vif->tx_irq = 0;
@@ -404,6 +496,15 @@ void xenvif_disconnect(struct xenvif *vif)
 {
 	pr_debug("disconnect!!\n");
 
+	if (vif->task) {
+		kthread_stop(vif->task);
+		vif->task = NULL;
+	}
+	if (rx_buf_cache) {
+		kmem_cache_destroy(rx_buf_cache);
+		rx_buf_cache = NULL;
+	}
+
 	if (vif->tx_irq) {
 		if (vif->tx_irq == vif->rx_irq)
 			unbind_from_irqhandler(vif->tx_irq, vif);
@@ -459,64 +560,64 @@ void xenvif_free(struct xenvif *vif)
  * function transitions to that state via the shortest path.
  */
 static void set_backend_state(struct backend_info *be,
-		enum xenbus_state state)
+			      enum xenbus_state state)
 {
 	while (be->state != state) {
 		switch (be->state) {
-			case XenbusStateClosed:
-				switch (state) {
-					case XenbusStateInitWait:
-					case XenbusStateConnected:
-						pr_info("%s: prepare for reconnect\n",
-								be->dev->nodename);
-						backend_switch_state(be, XenbusStateInitWait);
-						break;
-					case XenbusStateClosing:
-						backend_switch_state(be, XenbusStateClosing);
-						break;
-					default:
-						BUG();
-				}
-				break;
+		case XenbusStateClosed:
+			switch (state) {
 			case XenbusStateInitWait:
-				switch (state) {
-					case XenbusStateConnected:
-						backend_connect(be);
-						backend_switch_state(be, XenbusStateConnected);
-						break;
-					case XenbusStateClosing:
-					case XenbusStateClosed:
-						backend_switch_state(be, XenbusStateClosing);
-						break;
-					default:
-						BUG();
-				}
-				break;
 			case XenbusStateConnected:
-				switch (state) {
-					case XenbusStateInitWait:
-					case XenbusStateClosing:
-					case XenbusStateClosed:
-						backend_disconnect(be);
-						backend_switch_state(be, XenbusStateClosing);
-						break;
-					default:
-						BUG();
-				}
+				pr_info("%s: prepare for reconnect\n",
+					be->dev->nodename);
+				backend_switch_state(be, XenbusStateInitWait);
 				break;
 			case XenbusStateClosing:
-				switch (state) {
-					case XenbusStateInitWait:
-					case XenbusStateConnected:
-					case XenbusStateClosed:
-						backend_switch_state(be, XenbusStateClosed);
-						break;
-					default:
-						BUG();
-				}
+				backend_switch_state(be, XenbusStateClosing);
 				break;
 			default:
 				BUG();
+			}
+			break;
+		case XenbusStateInitWait:
+			switch (state) {
+			case XenbusStateConnected:
+				backend_connect(be);
+				backend_switch_state(be, XenbusStateConnected);
+				break;
+			case XenbusStateClosing:
+			case XenbusStateClosed:
+				backend_switch_state(be, XenbusStateClosing);
+				break;
+			default:
+				BUG();
+			}
+			break;
+		case XenbusStateConnected:
+			switch (state) {
+			case XenbusStateInitWait:
+			case XenbusStateClosing:
+			case XenbusStateClosed:
+				backend_disconnect(be);
+				backend_switch_state(be, XenbusStateClosing);
+				break;
+			default:
+				BUG();
+			}
+			break;
+		case XenbusStateClosing:
+			switch (state) {
+			case XenbusStateInitWait:
+			case XenbusStateConnected:
+			case XenbusStateClosed:
+				backend_switch_state(be, XenbusStateClosed);
+				break;
+			default:
+				BUG();
+			}
+			break;
+		default:
+			BUG();
 		}
 	}
 }
@@ -683,8 +784,9 @@ static DEFINE_XENBUS_DRIVER(nfback, ,
 	.otherend_changed = frontend_changed,
 );
 
-int xen_nfback_init(void)
+int xen_nfback_init(struct nf10_adapter *adapter)
 {
+	host_adapter = adapter;
 	return !(registered = xenbus_register_backend(&nfback_driver) == 0);
 }
 
@@ -742,12 +844,13 @@ static struct xen_netif_rx_response *make_rx_response(struct xenvif *vif,
 
 /* packet processing part interacting with nf dma engine (e.g., lbuf)
  * nf core should identify domid, by which vif is located */
-static int __xenvif_rx_action(struct xenvif *vif, void *buf_addr, size_t size)
+static int xenvif_rx_action(struct xenvif *vif)
 {
+	struct rx_buf *buf;
 	RING_IDX max_slots_needed;
 	unsigned copy_prod, copy_cons;
 	struct gnttab_copy *copy;
-	size_t remaining_size;
+	u32 size, remaining_size;
 	unsigned long bytes;
 	struct xen_netif_rx_request *req;
 	struct xen_netif_rx_response *resp;
@@ -755,91 +858,137 @@ static int __xenvif_rx_action(struct xenvif *vif, void *buf_addr, size_t size)
 	int ret;
 	bool need_to_notify = false;
 
-	max_slots_needed = DIV_ROUND_UP(size, PAGE_SIZE);
-	pr_debug("max_slots_needed=%u\n", max_slots_needed);
+	int chunk_order = 3;		/* FIXME */
 
-	if (!xenvif_rx_ring_slots_available(vif, max_slots_needed)) {
-		/* TODO: keep it back, notify, and try again */
-		pr_warn("RX ring is NOT available now!!!\n");
-		return -EIO;
-	}
+	if ((buf = rx_buf_dequeue(vif)) == NULL)
+		return -1;
 
-	for (copy_prod = 0, remaining_size = size;
-	     remaining_size > 0;
-	     copy_prod++, remaining_size -= PAGE_SIZE, buf_addr += PAGE_SIZE) {
-		req = RING_GET_REQUEST(&vif->rx, vif->rx.req_cons++);
-		vif->meta[copy_prod].id = req->id;	/* keep id for resp */
-		bytes = remaining_size < PAGE_SIZE ? remaining_size : PAGE_SIZE;
+	pr_debug("%s: addr=%p size=%u offset=%u\n", __func__, buf->addr, buf->size, buf->offset);
+	for (size = buf->size >> chunk_order;
+	     buf->offset < buf->size;
+	     buf->offset += size) {
+		void *buf_addr = buf->addr + buf->offset;
+		max_slots_needed = DIV_ROUND_UP(size, PAGE_SIZE);
 
-		copy = vif->grant_copy_op + copy_prod;
-		copy->flags = GNTCOPY_dest_gref;
-		copy->len = bytes;
+		if (!xenvif_rx_ring_slots_available(vif, max_slots_needed)) {
+			pr_warn("RX ring is NOT available (slots=%u, addr=%p, off=%u)\n",
+				max_slots_needed, buf_addr, buf->offset);
+			rx_buf_queue_head(vif, buf);
+			vif->rx_last_slots = max_slots_needed;
+			break;
+		}
 
-		copy->source.domid = DOMID_SELF;
-		copy->source.u.gmfn = virt_to_mfn(buf_addr);
-		copy->source.offset = 0;
+		for (copy_prod = 0, remaining_size = size;
+		     remaining_size > 0;
+		     copy_prod++, remaining_size -= PAGE_SIZE, buf_addr += PAGE_SIZE) {
+			req = RING_GET_REQUEST(&vif->rx, vif->rx.req_cons++);
+			vif->meta[copy_prod].id = req->id;	/* keep id for resp */
+			bytes = remaining_size < PAGE_SIZE ? remaining_size : PAGE_SIZE;
 
-		copy->dest.domid = vif->domid;
-		copy->dest.offset = 0;
-		copy->dest.u.ref = req->gref;
+			copy = vif->grant_copy_op + copy_prod;
+			copy->flags = GNTCOPY_dest_gref;
+			copy->len = bytes;
+
+			copy->source.domid = DOMID_SELF;
+			copy->source.u.gmfn = virt_to_mfn(buf_addr);
+			copy->source.offset = 0;
+
+			copy->dest.domid = vif->domid;
+			copy->dest.offset = 0;
+			copy->dest.u.ref = req->gref;
 #if 0
-		pr_debug("[copy_prod=%u] id=%u d%d->d%d addr=%p mfn=%lx bytes=%lu ref=%u\n",
-			 req->id, copy_prod, DOMID_SELF, vif->domid, buf_addr,
-			 copy->source.u.gmfn, bytes, req->gref);
+			pr_debug("[copy_prod=%u] id=%u d%d->d%d addr=%p mfn=%lx bytes=%lu ref=%u\n",
+					req->id, copy_prod, DOMID_SELF, vif->domid, buf_addr,
+					copy->source.u.gmfn, bytes, req->gref);
 #endif
-	}
+		}
 
-	BUG_ON(copy_prod > MAX_GRANT_COPY_OPS);
-	gnttab_batch_copy(vif->grant_copy_op, copy_prod);
+		BUG_ON(copy_prod > MAX_GRANT_COPY_OPS);
+		gnttab_batch_copy(vif->grant_copy_op, copy_prod);
 
-	for (copy_cons = 0, remaining_size = size;
-	     remaining_size > 0;
-	     copy_cons++, remaining_size -= PAGE_SIZE) {
-		bytes = remaining_size < PAGE_SIZE ? remaining_size : PAGE_SIZE;
-		copy = vif->grant_copy_op + copy_cons;
-		status = copy->status == GNTST_okay ?
-			XEN_NETIF_RSP_OKAY : XEN_NETIF_RSP_ERROR;
+		for (copy_cons = 0, remaining_size = size;
+				remaining_size > 0;
+				copy_cons++, remaining_size -= PAGE_SIZE) {
+			bytes = remaining_size < PAGE_SIZE ? remaining_size : PAGE_SIZE;
+			copy = vif->grant_copy_op + copy_cons;
+			status = copy->status == GNTST_okay ?
+				XEN_NETIF_RSP_OKAY : XEN_NETIF_RSP_ERROR;
 
-		/* FIXME: last flag arg to be appropriate like
-		 * XEN_NETRXF_data_validated */
-		resp = make_rx_response(vif, vif->meta[copy_cons].id,
+			/* FIXME: last flag arg to be appropriate like
+			 * XEN_NETRXF_data_validated */
+			resp = make_rx_response(vif, vif->meta[copy_cons].id,
 					status, 0, bytes, 0);  
 
-		RING_PUSH_RESPONSES_AND_CHECK_NOTIFY(&vif->rx, ret);
+			RING_PUSH_RESPONSES_AND_CHECK_NOTIFY(&vif->rx, ret);
 
-		need_to_notify |= !!ret;
+			need_to_notify |= !!ret;
 #if 0
-		pr_debug("[copy_cons=%u] id=%u status=%d bytes=%lu ret=%d need_to_notify=%d\n",
-			 copy_cons, vif->meta[copy_cons].id, status, bytes, ret, need_to_notify);
+			pr_debug("[copy_cons=%u] id=%u status=%d bytes=%lu ret=%d need_to_notify=%d\n",
+					copy_cons, vif->meta[copy_cons].id, status, bytes, ret, need_to_notify);
 #endif
+		}
+		if (need_to_notify)
+			notify_remote_via_irq(vif->rx_irq);
 	}
-	if (need_to_notify)
-		notify_remote_via_irq(vif->rx_irq);
+	
+	if (buf->offset == buf->size)
+		free_rx_buf(buf);
 
 	pr_debug("end of deliverying to frontend\n");
 
 	return 0;
 }
 
-int xenvif_rx_action(unsigned long domid, void *buf_addr, size_t size)
+static inline int rx_work_todo(struct xenvif *vif)
 {
-	int chunk_order = 3;
-	unsigned long unit;
-	struct xenvif *vif = FIXME_vif;	/* FIXME */
+	return !rx_buf_queue_empty(vif) &&
+		xenvif_rx_ring_slots_available(vif, vif->rx_last_slots);
+}
 
-	if (vif == NULL)
-		return -1;
+int xenvif_kthread(void *data)
+{
+	struct xenvif *vif = data;
+	struct rx_buf *buf;
 
-	if ((size >> (PAGE_SHIFT - chunk_order)) <= XEN_NETIF_RX_RING_SIZE)
-		return __xenvif_rx_action(vif, buf_addr, size);
+	while (!kthread_should_stop()) {
+		wait_event_interruptible(vif->wq,
+				rx_work_todo(vif) ||
+				kthread_should_stop());
+		if (kthread_should_stop())
+			break;
 
-	/* now we have too large buffer that might not fit in rx ring
-	 * so, chunk it and pass each chunk to front */
-	unit = size >> chunk_order;
-	while (size > 0 && __xenvif_rx_action(vif, buf_addr, unit) == 0) {
-		buf_addr += unit;
-		size -= unit;
+		if (!rx_buf_queue_empty(vif))
+			xenvif_rx_action(vif);
+
+		/* XXX: flow control - do we need? */
+
+		cond_resched();
 	}
+
+	/* Bin any remaining rx_bufs */
+	while ((buf = rx_buf_dequeue(vif)) != NULL)
+		free_rx_buf(buf);
+
+	return 0;
+}
+
+int xenvif_start_xmit(unsigned long domid, void *buf_addr, u32 size)
+{
+	struct xenvif *vif = FIXME_vif;	/* FIXME: dom-to-vif */
+	struct rx_buf *buf;
+
+	if (vif == NULL || vif->task == NULL)
+		return -EINVAL;
+
+	if ((buf = alloc_rx_buf()) == NULL)
+		return -ENOMEM;
+
+	buf->addr = buf_addr;
+	buf->size = size;
+	buf->offset = 0;
+
+	rx_buf_queue_tail(vif, buf);
+	xenvif_kick_thread(vif);
 
 	return 0;
 }

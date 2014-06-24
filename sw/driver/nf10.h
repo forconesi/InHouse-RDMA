@@ -34,6 +34,9 @@ struct nf10_adapter {
 	struct cdev cdev;
 	unsigned int nr_user_mmap;
 	wait_queue_head_t wq_user_intr;
+
+	/* for xen nfback */
+	struct nf10_xen_ops *xen_ops;
 };
 
 /* cmd for ctrl_irq() */
@@ -68,6 +71,11 @@ struct nf10_user_ops {
 	unsigned long	(*get_pfn)(struct nf10_adapter *adapter, unsigned long arg);
 	void		(*prepare_rx_buffer)(struct nf10_adapter *adapter,
 					     unsigned long arg);
+};
+
+struct nf10_xen_ops {
+	void	(*free_buffer)(struct nf10_adapter *adapter,
+			       void *kern_addr, dma_addr_t dma_addr);
 };
 
 static inline void nf10_writel(struct nf10_adapter *adapter, int off, u32 val)
