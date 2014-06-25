@@ -1,6 +1,7 @@
 #include <linux/etherdevice.h>
 #include "nf10.h"
 #include "nf10_lbuf.h"
+#include "nf10_lbuf_api.h"
 #include "nf10_user.h"
 
 #ifdef CONFIG_SKBPOOL
@@ -102,9 +103,6 @@ static unsigned long debug_count;	/* for debug */
 #define STOP_TIMESTAMP(i)
 #define ELAPSED_CYCLES(i)	(0ULL)
 #endif
-
-#define LBUF_SIZE	HPAGE_PMD_SIZE
-#define LBUF_ORDER	HPAGE_PMD_ORDER
 
 static inline void *alloc_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 {
@@ -396,11 +394,10 @@ static void nf10_lbuf_rx_worker(struct work_struct *work)
 }
 #endif
 
-static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
+static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *buf_addr)
 {
-	u32 *lbuf_addr = kern_addr;	/* 32bit pointer */
-	u32 nr_qwords = lbuf_addr[0];	/* first 32bit is # of qwords */
-	int dword_idx, max_dword_idx = (nr_qwords << 1) + 32;
+	u32 dword_idx; 
+	u32 nr_dwords;
 	u32 pkt_len;
 	struct net_device *netdev = adapter->netdev;
 	struct sk_buff *skb;
@@ -413,29 +410,26 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 #endif
 	DEFINE_TIMESTAMP(3);
 
-	if (nr_qwords == 0 ||
-	    max_dword_idx > 524288) {	/* FIXME: replace constant */
+	nr_dwords = LBUF_NR_DWORDS(buf_addr);
+	if (LBUF_IS_VALID(nr_dwords) == false) {
 		netif_err(adapter, rx_err, netdev,
-			  "rx_cons=%d's header contains invalid # of qwords=%u",
-			  rx_cons(), nr_qwords);
+			  "rx_cons=%d's header contains invalid # of dwords=%u",
+			  rx_cons(), nr_dwords);
 		return -1;
 	}
 
-	/* dword 1 to 31 are reserved */
-	dword_idx = 32;
+	dword_idx = LBUF_FIRST_DWORD_IDX();
 	do {
 #ifdef CONFIG_SKBPOOL
 		skbpool_prefetch_next(skb_entry);
 #endif
-
-		dword_idx++;			/* reserved for timestamp */
-		pkt_len = lbuf_addr[dword_idx++];
+		pkt_len = LBUF_PKT_LEN(buf_addr, dword_idx);
 
 		/* FIXME: replace constant */
 		if (unlikely(pkt_len < 60 || pkt_len > 1518)) {	
 			netif_err(adapter, rx_err, netdev,
-				  "rx_cons=%d lbuf contains invalid pkt len=%u",
-				  rx_cons(), pkt_len);
+				  "rx_cons=%d lbuf[%u] contains invalid pkt len=%u",
+				  rx_cons(), dword_idx, pkt_len);
 			goto next_pkt;
 		}
 		data_len = pkt_len - 4;
@@ -459,7 +453,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 #endif
 
 		START_TIMESTAMP(1);
-		skb_copy_to_linear_data(skb, (void *)(lbuf_addr + dword_idx),
+		skb_copy_to_linear_data(skb, LBUF_PKT_ADDR(buf_addr, dword_idx), 
 					data_len);	/* memcpy */
 		STOP_TIMESTAMP(1);
 
@@ -474,9 +468,8 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		STOP_TIMESTAMP(2);
 		rx_packets++;
 next_pkt:
-		/* keep dword_idx qword-aligned, so round up pkt_len */
-		dword_idx += ((pkt_len + 7) & ~7) >> 2;
-	} while(dword_idx < max_dword_idx);
+		dword_idx = LBUF_NEXT_DWORD_IDX(buf_addr, dword_idx);
+	} while(dword_idx < nr_dwords);
 
 #ifdef CONFIG_SKBPOOL
 	if (likely(skb_entry_last)) {
@@ -488,9 +481,9 @@ next_pkt:
 	adapter->netdev->stats.rx_packets += rx_packets;
 
 	netif_dbg(adapter, rx_status, adapter->netdev,
-		  "RX lbuf delivered nr_qwords=%u rx_packets=%u/%lu" 
+		  "RX lbuf delivered nr_dwords=%u rx_packets=%u/%lu" 
 		  " alloc=%llu memcpy=%llu skbpass=%llu\n",
-		  nr_qwords, rx_packets, adapter->netdev->stats.rx_packets,
+		  nr_dwords, rx_packets, adapter->netdev->stats.rx_packets,
 		  ELAPSED_CYCLES(0), ELAPSED_CYCLES(1), ELAPSED_CYCLES(2));
 
 	return 0;
