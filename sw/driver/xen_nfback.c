@@ -162,6 +162,7 @@ static irqreturn_t xenvif_rx_interrupt(int irq, void *dev_id)
 {       
 	struct xenvif *vif = dev_id;
 
+	pr_debug("%s\n", __func__);
 	xenvif_kick_thread(vif);
 	return IRQ_HANDLED;
 }
@@ -334,8 +335,12 @@ int xenvif_connect(struct xenvif *vif, unsigned long tx_ring_ref,
 		err = PTR_ERR(task);
 		goto err_rx_unbind;
 	}
-
 	vif->task = task;
+
+	enable_irq(vif->tx_irq);
+	if (vif->tx_irq != vif->rx_irq)
+		enable_irq(vif->rx_irq);
+
 	wake_up_process(vif->task);
 
 	return 0;
@@ -501,6 +506,10 @@ static void backend_create_xenvif(struct backend_info *be)
 void xenvif_disconnect(struct xenvif *vif)
 {
 	pr_debug("disconnect!!\n");
+
+	disable_irq(vif->tx_irq);
+	if (vif->tx_irq != vif->rx_irq)
+		disable_irq(vif->rx_irq);
 
 	if (vif->task) {
 		kthread_stop(vif->task);
@@ -939,13 +948,15 @@ static int xenvif_rx_action(struct xenvif *vif)
 	if (buf->offset == buf->size)
 		free_rx_buf(buf);
 
-	pr_debug("end of deliverying to frontend\n");
+	pr_debug("end of xmit to front: queue empty=%d\n", rx_buf_queue_empty(vif));
 
 	return 0;
 }
 
 static inline int rx_work_todo(struct xenvif *vif)
 {
+	pr_debug("rx_work_todo: non-empty=%d avail=%d last=%u\n",
+		 !rx_buf_queue_empty(vif), xenvif_rx_ring_slots_available(vif, vif->rx_last_slots), vif->rx_last_slots);
 	return !rx_buf_queue_empty(vif) &&
 		xenvif_rx_ring_slots_available(vif, vif->rx_last_slots);
 }
