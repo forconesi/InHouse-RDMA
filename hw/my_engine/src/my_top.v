@@ -237,9 +237,9 @@ module my_top (
     //-------------------------------------------------------
     // Local Wires tx_mac_interface tx
     //-------------------------------------------------------
-    wire   [`BF:0]                                    tx_commited_rd_address;
-    wire                                              tx_commited_rd_address_change;
-    wire                                              tx_wr_addr_updated;
+    wire   [`BF:0]                                    tx_commited_rd_addr;
+    wire                                              tx_commited_rd_addr_change;
+    wire                                              tx_commited_wr_addr_change;
     wire   [`BF:0]                                    tx_commited_wr_addr;
 
     ////////////////////////////////////////////////
@@ -521,9 +521,9 @@ module my_top (
         .tx_ack(mac_tx_ack),                   // I
         .rd_addr(tx_rd_addr),                  // O [`BF:0]
         .rd_data(tx_rd_data),                  // I [63:0]
-        .commited_rd_address(tx_commited_rd_address),  // O [`BF:0]
-        .commited_rd_address_change(tx_commited_rd_address_change),  // O
-        .wr_addr_updated(tx_wr_addr_updated),   // I
+        .commited_rd_addr(tx_commited_rd_addr),  // O [`BF:0]
+        .commited_rd_addr_change(tx_commited_rd_addr_change),  // O
+        .commited_wr_addr_change(tx_commited_wr_addr_change),   // I
         .commited_wr_addr(tx_commited_wr_addr)  // I [`BF:0]
         );
     //////////////////////////////////////////////////////////////////////////////////////////
@@ -602,9 +602,9 @@ module my_top (
         //-------------------------------------------------------
         // To tx_mac_interface
         //-------------------------------------------------------
-        .tx_commited_rd_address(tx_commited_rd_address),    // I [`BF:0]
-        .tx_commited_rd_address_change(tx_commited_rd_address_change),    // I 
-        .tx_wr_addr_updated(tx_wr_addr_updated),            // O 
+        .tx_commited_rd_addr(tx_commited_rd_addr),    // I [`BF:0]
+        .tx_commited_rd_addr_change(tx_commited_rd_addr_change),    // I 
+        .tx_commited_wr_addr_change(tx_commited_wr_addr_change),            // O 
         .tx_commited_wr_addr(tx_commited_wr_addr),          // O [`BF:0]
 
         // Rx Local-Link

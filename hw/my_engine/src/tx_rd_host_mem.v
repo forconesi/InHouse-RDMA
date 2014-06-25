@@ -29,6 +29,7 @@ module tx_rd_host_mem (
 
     input       [63:0]     huge_page_addr,
     input                  read_chunk,
+    input       [3:0]      tlp_tag,
     input       [8:0]      qwords_to_rd,
     output reg             read_chunk_ack,
     input                  send_huge_page_rd_completed,
@@ -73,13 +74,12 @@ module tx_rd_host_mem (
     //-------------------------------------------------------   
     reg     [14:0]  state;
     reg     [63:0]  host_mem_addr;
-    reg     [4:0]   tlp_tag;
-    reg     [3:0]   next_tlp_tag;
     reg     [63:0]  next_completed_buffer_address;
     reg     [63:0]  last_completed_buffer_address;
     reg     [31:0]  huge_page_index;
     reg     [31:0]  next_huge_page_index;
     reg     [63:0]  notification_message_reg;
+    reg     [3:0]   tlp_tag_reg;
 
     assign reset_n = ~trn_lnk_up_n;
     
@@ -96,8 +96,6 @@ module tx_rd_host_mem (
             trn_teof_n <= 1'b1;
             trn_tsrc_rdy_n <= 1'b1;
             cfg_interrupt_n <= 1'b1;
-            tlp_tag <= 'b0;
-            next_tlp_tag <= 'b0;
 
             read_chunk_ack <= 1'b0;
             send_huge_page_rd_completed_ack <= 1'b0;
@@ -124,6 +122,7 @@ module tx_rd_host_mem (
                     driving_interface <= 1'b0;
                     host_mem_addr <= huge_page_addr;
                     notification_message_reg <= notification_message;
+                    tlp_tag_reg <= tlp_tag;
                     if (my_turn) begin
                         if ( (trn_tbuf_av[0]) && (!trn_tdst_rdy_n) ) begin          // credits available and endpointready and myturn
                             if (read_chunk) begin
@@ -161,25 +160,23 @@ module tx_rd_host_mem (
                                 4'b0,   //reserved
                                 1'b0,   //TD (TLP digest present)
                                 1'b0,   //EP (poisoned data)
-                                2'b00,  //Relaxed ordering, No spoon in processor cache
+                                2'b10,  //Relaxed ordering, No snoop in processor cache
                                 2'b0,   //reserved
                                 {qwords_to_rd, 1'b0}          //10'h080   //lenght in DWs. 10-bit field 128DWs == 512 bytes
                             };
                     trn_td[31:0] <= {
                                 cfg_completer_id,   //Requester ID
-                                {3'b0, tlp_tag },   //Tag
+                                {4'b0, tlp_tag_reg },   //Tag
                                 4'hF,   //last DW byte enable
                                 4'hF    //1st DW byte enable
                             };
                     trn_tsof_n <= 1'b0;
                     trn_tsrc_rdy_n <= 1'b0;
-                    next_tlp_tag <= next_tlp_tag +1;
                     
                     state <= s2;
                 end
 
                 s2 : begin
-                    tlp_tag[3:0] <= next_tlp_tag;
                     if (!trn_tdst_rdy_n) begin
                         trn_tsof_n <= 1'b1;
                         trn_teof_n <= 1'b0;
@@ -221,8 +218,6 @@ module tx_rd_host_mem (
                             };
                     trn_tsof_n <= 1'b0;
                     trn_tsrc_rdy_n <= 1'b0;
-                    tlp_tag[4] <= ~tlp_tag[4];
-                    next_tlp_tag <= 'b0;
                     
                     state <= s5;
                 end

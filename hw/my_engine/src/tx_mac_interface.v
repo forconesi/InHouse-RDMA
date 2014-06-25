@@ -20,9 +20,9 @@ module tx_mac_interface (
     
     
     // Internal logic
-    output reg    [`BF:0]     commited_rd_address,
-    output reg                commited_rd_address_change,
-    input                     wr_addr_updated,                         //250 MHz domain driven
+    output reg    [`BF:0]     commited_rd_addr,
+    output reg                commited_rd_addr_change,
+    input                     commited_wr_addr_change,                         //250 MHz domain driven
     input         [`BF:0]     commited_wr_addr                //250 MHz domain driven
 
     );
@@ -39,8 +39,8 @@ module tx_mac_interface (
     //-------------------------------------------------------
     // Local 250 MHz signal synch
     //-------------------------------------------------------
-    reg              wr_addr_updated_reg0;
-    reg              wr_addr_updated_reg1;
+    reg              commited_wr_addr_change_reg0;
+    reg              commited_wr_addr_change_reg1;
     reg     [`BF:0]  commited_wr_addr_reg0;
     reg     [`BF:0]  commited_wr_addr_reg1;
 
@@ -87,19 +87,19 @@ module tx_mac_interface (
     always @( posedge clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
-            wr_addr_updated_reg0 <= 1'b0;
-            wr_addr_updated_reg1 <= 1'b0;
+            commited_wr_addr_change_reg0 <= 1'b0;
+            commited_wr_addr_change_reg1 <= 1'b0;
             commited_wr_addr_reg0 <= 'b0;
             commited_wr_addr_reg1 <= 'b0;
         end
         
         else begin  // not reset
-            wr_addr_updated_reg0 <= wr_addr_updated;
-            wr_addr_updated_reg1 <= wr_addr_updated_reg0;
+            commited_wr_addr_change_reg0 <= commited_wr_addr_change;
+            commited_wr_addr_change_reg1 <= commited_wr_addr_change_reg0;
 
             commited_wr_addr_reg0 <= commited_wr_addr;
 
-            if (wr_addr_updated_reg1) begin                                      // transitory off
+            if (commited_wr_addr_change_reg1) begin                                      // transitory off
                 commited_wr_addr_reg1 <= commited_wr_addr_reg0;
             end
 
@@ -320,8 +320,8 @@ module tx_mac_interface (
     always @( posedge clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
-            commited_rd_address_change <= 1'b0;
-            commited_rd_address <= 'b0;
+            commited_rd_addr_change <= 1'b0;
+            commited_rd_addr <= 'b0;
             signal_carefully_fsm <= s0;
         end
         
@@ -330,15 +330,15 @@ module tx_mac_interface (
             case (signal_carefully_fsm)
 
                 s0: begin
-                    commited_rd_address_change <= 1'b0;
+                    commited_rd_addr_change <= 1'b0;
                     if (end_of_eth_frame) begin
-                        commited_rd_address <= rd_addr_prev0;
+                        commited_rd_addr <= rd_addr_prev0;
                         signal_carefully_fsm <= s1;
                     end
                 end
 
                 s1 : begin
-                    commited_rd_address_change <= 1'b1;
+                    commited_rd_addr_change <= 1'b1;
                     signal_carefully_fsm <= s0;
                 end
 

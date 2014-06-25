@@ -393,7 +393,7 @@ module rx_wr_pkt_to_hugepages (
                                 4'b0,   //reserved
                                 1'b0,   //TD (TLP digest present)
                                 1'b0,   //EP (poisoned data)
-                                2'b00,  //Relaxed ordering, No spoon in processor cache
+                                2'b00,  //Relaxed ordering, No snoop in processor cache
                                 2'b0,   //reserved
                                 {qwords_in_tlp, 1'b0}  //lenght in DWs. 10-bit field    // QWs x2 equals DWs
                             };
@@ -495,7 +495,7 @@ module rx_wr_pkt_to_hugepages (
                                 4'b0,   //reserved
                                 1'b0,   //TD (TLP digest present)
                                 1'b0,   //EP (poisoned data)
-                                2'b00,  //Relaxed ordering, No spoon in processor cache
+                                2'b00,  //Relaxed ordering, No snoop in processor cache
                                 2'b0,   //reserved
                                 10'h02  //lenght equal 2 DW 
                             };
@@ -595,7 +595,7 @@ endmodule // rx_wr_pkt_to_hugepages
                                     4'b0,   //reserved
                                     1'b0,   //TD (TLP digest present)
                                     1'b0,   //EP (poisoned data)
-                                    2'b00,  //Relaxed ordering, No spoon in processor cache
+                                    2'b00,  //Relaxed ordering, No snoop in processor cache
                                     2'b0,   //reserved
                                     10'h01  //lenght equal 1 DW 
                                 };
