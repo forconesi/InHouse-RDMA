@@ -402,7 +402,6 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 	u32 nr_qwords = lbuf_addr[0];	/* first 32bit is # of qwords */
 	int dword_idx, max_dword_idx = (nr_qwords << 1) + 32;
 	u32 pkt_len;
-	u8 bytes_remainder;
 	struct net_device *netdev = adapter->netdev;
 	struct sk_buff *skb;
 	unsigned int rx_packets = 0;
@@ -475,12 +474,8 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *kern_addr)
 		STOP_TIMESTAMP(2);
 		rx_packets++;
 next_pkt:
-		dword_idx += pkt_len >> 2;	/* byte -> dword */
-		bytes_remainder = pkt_len & 0x7;
-		if (bytes_remainder >= 4)
-			dword_idx++;
-		else if (bytes_remainder > 0)
-			dword_idx += 2;
+		/* keep dword_idx qword-aligned, so round up pkt_len */
+		dword_idx += ((pkt_len + 7) & ~7) >> 2;
 	} while(dword_idx < max_dword_idx);
 
 #ifdef CONFIG_SKBPOOL
