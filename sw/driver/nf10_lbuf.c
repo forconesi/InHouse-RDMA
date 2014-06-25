@@ -394,10 +394,9 @@ static void nf10_lbuf_rx_worker(struct work_struct *work)
 }
 #endif
 
-static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *buf_addr)
+static int deliver_packets(struct nf10_adapter *adapter, void *buf_addr,
+			   unsigned int dword_idx, unsigned int nr_dwords)
 {
-	u32 dword_idx; 
-	u32 nr_dwords;
 	u32 pkt_len;
 	struct net_device *netdev = adapter->netdev;
 	struct sk_buff *skb;
@@ -410,15 +409,6 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *buf_addr)
 #endif
 	DEFINE_TIMESTAMP(3);
 
-	nr_dwords = LBUF_NR_DWORDS(buf_addr);
-	if (LBUF_IS_VALID(nr_dwords) == false) {
-		netif_err(adapter, rx_err, netdev,
-			  "rx_cons=%d's header contains invalid # of dwords=%u",
-			  rx_cons(), nr_dwords);
-		return -1;
-	}
-
-	dword_idx = LBUF_FIRST_DWORD_IDX();
 	do {
 #ifdef CONFIG_SKBPOOL
 		skbpool_prefetch_next(skb_entry);
@@ -458,7 +448,7 @@ static int nf10_lbuf_deliver_skbs(struct nf10_adapter *adapter, void *buf_addr)
 		STOP_TIMESTAMP(1);
 
 		skb_put(skb, data_len);
-		skb->protocol = eth_type_trans(skb, adapter->netdev);
+		skb->protocol = eth_type_trans(skb, netdev);
 		skb->ip_summed = CHECKSUM_NONE;
 
 		START_TIMESTAMP(2);
@@ -478,15 +468,44 @@ next_pkt:
 		queue_work(lbuf_hw.rx_wq, get_rx_work());
 	}
 #endif
-	adapter->netdev->stats.rx_packets += rx_packets;
+	netdev->stats.rx_packets += rx_packets;
 
-	netif_dbg(adapter, rx_status, adapter->netdev,
+	netif_dbg(adapter, rx_status, netdev,
 		  "RX lbuf delivered nr_dwords=%u rx_packets=%u/%lu" 
 		  " alloc=%llu memcpy=%llu skbpass=%llu\n",
-		  nr_dwords, rx_packets, adapter->netdev->stats.rx_packets,
+		  nr_dwords, rx_packets, netdev->stats.rx_packets,
 		  ELAPSED_CYCLES(0), ELAPSED_CYCLES(1), ELAPSED_CYCLES(2));
 
 	return 0;
+}
+
+static void deliver_lbuf(struct nf10_adapter *adapter, struct desc *desc)
+{
+	void *buf_addr = desc->kern_addr;
+	unsigned int nr_dwords = LBUF_NR_DWORDS(buf_addr);
+	unsigned int dword_idx = LBUF_FIRST_DWORD_IDX();
+
+	if (LBUF_IS_VALID(nr_dwords) == false) {
+		netif_err(adapter, rx_err, adapter->netdev,
+			  "rx_cons=%d's header contains invalid # of dwords=%u",
+			  rx_cons(), nr_dwords);
+		return;
+	}
+
+	/* if a user process can handle it, pass it up and return */
+	if (nf10_user_rx_callback(adapter))
+		return;
+
+#ifdef CONFIG_XEN_NF_BACKEND
+	/* if failed to deliver to frontend, fallback with host processing.
+	 * currently, domid is set as an arbitrary number (1), since we don't
+	 * have packet classification in hardware right now */
+	if (xenvif_start_xmit(1 /* FIXME */,
+			      buf_addr, desc->dma_addr, LBUF_SIZE) == 0)
+		return;
+#endif
+	deliver_packets(adapter, buf_addr, dword_idx, nr_dwords);
+	unmap_and_free_lbuf(adapter, desc, RX);
 }
 
 static u64 nf10_lbuf_user_init(struct nf10_adapter *adapter)
@@ -637,22 +656,8 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	pci_dma_sync_single_for_cpu(adapter->pdev, desc.dma_addr,
 				    LBUF_SIZE, PCI_DMA_FROMDEVICE);
 #endif
-	/* if a user process can handle it, pass it up and return */
-	if (nf10_user_rx_callback(adapter))
-		return;
-
-#ifdef CONFIG_XEN_NF_BACKEND
-	/* if failed to deliver to frontend, fallback with host processing.
-	 * currently, domid is set as an arbitrary number (1), since we don't
-	 * have packet classification in hardware right now */
-	if (xenvif_start_xmit(1 /* FIXME */, desc.kern_addr, desc.dma_addr, LBUF_SIZE) == 0) {
-		*work_done = 1;
-		return;
-	}
-#endif
 	/* currently, just process one large buffer, regardless of budget */
-	nf10_lbuf_deliver_skbs(adapter, desc.kern_addr);
-	unmap_and_free_lbuf(adapter, &desc, RX);
+	deliver_lbuf(adapter, &desc);
 	*work_done = 1;
 }
 
