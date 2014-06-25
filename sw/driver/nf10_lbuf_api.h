@@ -16,9 +16,8 @@
  */
 #define LBUF_TIMESTAMP(buf_addr, dword_idx)	((unsigned int *)buf_addr)[dword_idx]
 #define LBUF_PKT_LEN(buf_addr, dword_idx)	((unsigned int *)buf_addr)[dword_idx+1]
-#define LBUF_PKT_ADDR(buf_addr, dword_idx)	&((unsigned int *)buf_addr)[dword_idx+2]
-#define LBUF_NEXT_DWORD_IDX(buf_addr, dword_idx)	\
-	(dword_idx + 2 + (((LBUF_PKT_LEN(buf_addr, dword_idx) + 7) & ~7) >> 2))
+#define LBUF_PKT_ADDR(buf_addr, dword_idx)	(void *)&((unsigned int *)buf_addr)[dword_idx+2]
+#define LBUF_NEXT_DWORD_IDX(dword_idx, pkt_len)     (dword_idx + 2 + (((pkt_len + 7) & ~7) >> 2))
 
 /* check functions */
 #define LBUF_IS_VALID(nr_dwords)		(nr_dwords > NR_RESERVED_DWORDS && nr_dwords <= (LBUF_SIZE >> 2))

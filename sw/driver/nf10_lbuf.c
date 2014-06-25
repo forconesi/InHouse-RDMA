@@ -458,7 +458,7 @@ static int deliver_packets(struct nf10_adapter *adapter, void *buf_addr,
 		STOP_TIMESTAMP(2);
 		rx_packets++;
 next_pkt:
-		dword_idx = LBUF_NEXT_DWORD_IDX(buf_addr, dword_idx);
+		dword_idx = LBUF_NEXT_DWORD_IDX(dword_idx, pkt_len);
 	} while(dword_idx < nr_dwords);
 
 #ifdef CONFIG_SKBPOOL
