@@ -865,7 +865,8 @@ static int xenvif_rx_action(struct xenvif *vif)
 	RING_IDX max_slots_needed;
 	unsigned copy_prod, copy_cons;
 	struct gnttab_copy *copy;
-	u32 size, remaining_size;
+	unsigned int size;
+	int remaining_size;
 	unsigned long bytes;
 	struct xen_netif_rx_request *req;
 	struct xen_netif_rx_response *resp;
@@ -873,18 +874,24 @@ static int xenvif_rx_action(struct xenvif *vif)
 	int ret;
 	bool need_to_notify = false;
 
-	int chunk_order = 3;		/* FIXME */
+	/* FIXME: to be configurable based on profiling, 64 pages (512KB) */
+	int chunk_size = PAGE_SIZE << 6;
 
 	if ((buf = rx_buf_dequeue(vif)) == NULL)
 		return -1;
 
-	pr_debug("%s: addr=%p size=%u offset=%u\n", __func__, buf->addr, buf->size, buf->offset);
-	for (size = buf->size >> chunk_order;
+	pr_debug("%s: addr=%p size=%u off=%u\n", __func__, buf->addr, buf->size, buf->offset);
+	for (size = buf->size >= chunk_size ? chunk_size : buf->size;
 	     buf->offset < buf->size;
 	     buf->offset += size) {
 		void *buf_addr = buf->addr + buf->offset;
+
+		if (buf->size - buf->offset < chunk_size)
+			size = buf->size - buf->offset;
+
 		max_slots_needed = DIV_ROUND_UP(size, PAGE_SIZE);
 
+		pr_debug("  <chunk_size=%u(%u slots)> off/size=%u/%u\n", size, max_slots_needed, buf->offset, buf->size);
 		if (!xenvif_rx_ring_slots_available(vif, max_slots_needed)) {
 			pr_warn("RX ring is NOT available (slots=%u, addr=%p, off=%u)\n",
 				max_slots_needed, buf_addr, buf->offset);
@@ -912,7 +919,7 @@ static int xenvif_rx_action(struct xenvif *vif)
 			copy->dest.offset = 0;
 			copy->dest.u.ref = req->gref;
 #if 0
-			pr_debug("[copy_prod=%u] id=%u d%d addr=%p mfn=%lx bytes=%lu ref=%u\n",
+			pr_debug("    [copy_prod=%u] id=%u d%d addr=%p mfn=%lx bytes=%lu ref=%u\n",
 				 copy_prod, req->id, vif->domid, buf_addr, copy->source.u.gmfn, bytes, req->gref);
 #endif
 		}
@@ -937,7 +944,7 @@ static int xenvif_rx_action(struct xenvif *vif)
 
 			need_to_notify |= !!ret;
 #if 0
-			pr_debug("[copy_cons=%u] id=%u status=%d bytes=%lu ret=%d need_to_notify=%d\n",
+			pr_debug("    [copy_cons=%u] id=%u status=%d bytes=%lu ret=%d need_to_notify=%d\n",
 				 copy_cons, vif->meta[copy_cons].id, status, bytes, ret, need_to_notify);
 #endif
 		}

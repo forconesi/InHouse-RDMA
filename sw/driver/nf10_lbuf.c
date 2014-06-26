@@ -501,7 +501,7 @@ static void deliver_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 	 * currently, domid is set as an arbitrary number (1), since we don't
 	 * have packet classification in hardware right now */
 	if (xenvif_start_xmit(1 /* FIXME */,
-			      buf_addr, desc->dma_addr, LBUF_SIZE) == 0)
+			      buf_addr, desc->dma_addr, nr_dwords << 2) == 0)
 		return;
 #endif
 	deliver_packets(adapter, buf_addr, dword_idx, nr_dwords);
