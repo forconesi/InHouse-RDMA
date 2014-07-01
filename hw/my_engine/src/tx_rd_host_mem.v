@@ -29,7 +29,7 @@ module tx_rd_host_mem (
 
     input       [63:0]     huge_page_addr,
     input                  read_chunk,
-    input       [3:0]      tlp_tag,
+    output reg  [3:0]      tlp_tag,
     input       [8:0]      qwords_to_rd,
     output reg             read_chunk_ack,
     input                  send_huge_page_rd_completed,
@@ -79,7 +79,7 @@ module tx_rd_host_mem (
     reg     [31:0]  huge_page_index;
     reg     [31:0]  next_huge_page_index;
     reg     [63:0]  notification_message_reg;
-    reg     [3:0]   tlp_tag_reg;
+    reg     [3:0]   next_tlp_tag;
 
     assign reset_n = ~trn_lnk_up_n;
     
@@ -102,6 +102,7 @@ module tx_rd_host_mem (
             huge_page_index <= 'b0;
             send_interrupt_ack <= 1'b0;
             notify_ack <= 1'b0;
+            next_tlp_tag <= 'b0;
 
             driving_interface <= 1'b0;
             state <= s0;
@@ -122,7 +123,7 @@ module tx_rd_host_mem (
                     driving_interface <= 1'b0;
                     host_mem_addr <= huge_page_addr;
                     notification_message_reg <= notification_message;
-                    tlp_tag_reg <= tlp_tag;
+                    tlp_tag <= next_tlp_tag;
                     if (my_turn) begin
                         if ( (trn_tbuf_av[0]) && (!trn_tdst_rdy_n) ) begin          // credits available and endpointready and myturn
                             if (read_chunk) begin
@@ -166,7 +167,7 @@ module tx_rd_host_mem (
                             };
                     trn_td[31:0] <= {
                                 cfg_completer_id,   //Requester ID
-                                {4'b0, tlp_tag_reg },   //Tag
+                                {4'b0, tlp_tag },   //Tag
                                 4'hF,   //last DW byte enable
                                 4'hF    //1st DW byte enable
                             };
@@ -177,6 +178,7 @@ module tx_rd_host_mem (
                 end
 
                 s2 : begin
+                    next_tlp_tag <= tlp_tag +1;
                     if (!trn_tdst_rdy_n) begin
                         trn_tsof_n <= 1'b1;
                         trn_teof_n <= 1'b0;
