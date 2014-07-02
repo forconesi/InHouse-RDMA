@@ -471,7 +471,7 @@ next_pkt:
 	netdev->stats.rx_packets += rx_packets;
 
 	netif_dbg(adapter, rx_status, netdev,
-		  "RX lbuf delivered nr_dwords=%u rx_packets=%u/%lu" 
+		  "RX lbuf delivered to host nr_dwords=%u rx_packets=%u/%lu" 
 		  " alloc=%llu memcpy=%llu skbpass=%llu\n",
 		  nr_dwords, rx_packets, netdev->stats.rx_packets,
 		  ELAPSED_CYCLES(0), ELAPSED_CYCLES(1), ELAPSED_CYCLES(2));
@@ -501,8 +501,12 @@ static void deliver_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 	 * currently, domid is set as an arbitrary number (1), since we don't
 	 * have packet classification in hardware right now */
 	if (xenvif_start_xmit(1 /* FIXME */,
-			      buf_addr, desc->dma_addr, nr_dwords << 2) == 0)
+			      buf_addr, desc->dma_addr, nr_dwords << 2) == 0) {
+		netif_dbg(adapter, rx_status, adapter->netdev,
+			  "RX lbuf delivered to frontend nr_dwords=%u\n",
+			  nr_dwords);
 		return;
+	}
 #endif
 	deliver_packets(adapter, buf_addr, dword_idx, nr_dwords);
 	unmap_and_free_lbuf(adapter, desc, RX);

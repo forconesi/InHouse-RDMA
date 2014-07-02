@@ -12,7 +12,10 @@ ifeq ($(CONFIG_SKBPOOL),y)
 nf10-objs += skbpool.o
 endif
 
+ifeq ($(NDEBUG),)
 ccflags-y += -g -DDEBUG
+endif
+
 ccflags-$(CONFIG_XEN_NF_BACKEND) += -DCONFIG_XEN_NF_BACKEND
 ccflags-$(CONFIG_SKBPOOL) += -DCONFIG_SKBPOOL
 ccflags-$(CONFIG_PROFILE) += -DCONFIG_PROFILE
