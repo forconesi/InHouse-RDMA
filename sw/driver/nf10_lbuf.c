@@ -503,8 +503,8 @@ static void deliver_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 	if (xenvif_start_xmit(1 /* FIXME */,
 			      buf_addr, desc->dma_addr, nr_dwords << 2) == 0) {
 		netif_dbg(adapter, rx_status, adapter->netdev,
-			  "RX lbuf delivered to frontend nr_dwords=%u\n",
-			  nr_dwords);
+			  "RX lbuf(%p) delivered to frontend nr_dwords=%u\n",
+			  buf_addr, nr_dwords);
 		return;
 	}
 #endif

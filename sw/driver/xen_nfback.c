@@ -65,6 +65,7 @@ struct xenvif {
 
 	struct {
 		int id;
+		int size;
 	} meta[XEN_NETIF_RX_RING_SIZE];
 };
 struct xenvif *FIXME_vif;	/* FIXME after classification support of nf */
@@ -114,29 +115,44 @@ static int rx_buf_queue_empty(struct xenvif *vif)
 	return list_empty(&vif->rx_buf_head);
 }
 
+static void __rx_buf_queue_tail(struct list_head *head, struct rx_buf *buf)
+{
+	list_add_tail(&buf->list, head);
+}
+
 static void rx_buf_queue_tail(struct xenvif *vif, struct rx_buf *buf)
 {
 	spin_lock(&vif->rx_buf_lock);
-	list_add_tail(&buf->list, &vif->rx_buf_head);
+	__rx_buf_queue_tail(&vif->rx_buf_head, buf);
 	spin_unlock(&vif->rx_buf_lock);
 }
 
 static void rx_buf_queue_head(struct xenvif *vif, struct rx_buf *buf)
 {
+	/* no need of lockless currently */
 	spin_lock(&vif->rx_buf_lock);
 	list_add(&buf->list, &vif->rx_buf_head);
 	spin_unlock(&vif->rx_buf_lock);
 }
 
-static struct rx_buf *rx_buf_dequeue(struct xenvif *vif)
+static struct rx_buf *__rx_buf_dequeue(struct list_head *head)
 {
 	struct rx_buf *buf = NULL;
 
-	spin_lock(&vif->rx_buf_lock);
-	if (!rx_buf_queue_empty(vif)) {
-		buf = list_first_entry(&vif->rx_buf_head, struct rx_buf, list);
+	if (!list_empty(head)) {
+		buf = list_first_entry(head, struct rx_buf, list);
 		list_del(&buf->list);
 	}
+
+	return buf;
+}
+
+static struct rx_buf *rx_buf_dequeue(struct xenvif *vif)
+{
+	struct rx_buf *buf;
+
+	spin_lock(&vif->rx_buf_lock);
+	buf = __rx_buf_dequeue(&vif->rx_buf_head);
 	spin_unlock(&vif->rx_buf_lock);
 
 	return buf;
@@ -865,47 +881,41 @@ static int xenvif_rx_action(struct xenvif *vif)
 	RING_IDX max_slots_needed;
 	unsigned copy_prod, copy_cons;
 	struct gnttab_copy *copy;
-	unsigned int size;
 	int remaining_size;
+	void *buf_addr;
 	unsigned long bytes;
 	struct xen_netif_rx_request *req;
 	struct xen_netif_rx_response *resp;
+	struct list_head rxq;
 	int status;
 	int ret;
 	bool need_to_notify = false;
 
-	/* FIXME: to be configurable based on profiling, 64 pages (512KB) */
-	int chunk_size = PAGE_SIZE << 6;
+	INIT_LIST_HEAD(&rxq);
 
-	if ((buf = rx_buf_dequeue(vif)) == NULL)
-		return -1;
+	copy_prod = 0;
+	while ((buf = rx_buf_dequeue(vif))) {
+		pr_debug("%s: addr=%p size=%u off=%u\n", __func__, buf->addr, buf->size, buf->offset);
 
-	pr_debug("%s: addr=%p size=%u off=%u\n", __func__, buf->addr, buf->size, buf->offset);
-	for (size = buf->size >= chunk_size ? chunk_size : buf->size;
-	     buf->offset < buf->size;
-	     buf->offset += size) {
-		void *buf_addr = buf->addr + buf->offset;
+		for (; buf->offset < buf->size; buf->offset += bytes) {
+			buf_addr = buf->addr + buf->offset;
+			max_slots_needed = 1;
 
-		if (buf->size - buf->offset < chunk_size)
-			size = buf->size - buf->offset;
+			if (!xenvif_rx_ring_slots_available(vif, max_slots_needed)) {
+				pr_warn("RX ring is NOT available (slots=%u, addr=%p, off=%u)\n",
+						max_slots_needed, buf_addr, buf->offset);
+				rx_buf_queue_head(vif, buf);
+				vif->rx_last_slots = max_slots_needed;
+				goto gntcopy;
+			}
+			remaining_size = buf->size - buf->offset;
 
-		max_slots_needed = DIV_ROUND_UP(size, PAGE_SIZE);
-
-		pr_debug("  <chunk_size=%u(%u slots)> off/size=%u/%u\n", size, max_slots_needed, buf->offset, buf->size);
-		if (!xenvif_rx_ring_slots_available(vif, max_slots_needed)) {
-			pr_warn("RX ring is NOT available (slots=%u, addr=%p, off=%u)\n",
-				max_slots_needed, buf_addr, buf->offset);
-			rx_buf_queue_head(vif, buf);
-			vif->rx_last_slots = max_slots_needed;
-			break;
-		}
-
-		for (copy_prod = 0, remaining_size = size;
-		     remaining_size > 0;
-		     copy_prod++, remaining_size -= PAGE_SIZE, buf_addr += PAGE_SIZE) {
 			req = RING_GET_REQUEST(&vif->rx, vif->rx.req_cons++);
-			vif->meta[copy_prod].id = req->id;	/* keep id for resp */
 			bytes = remaining_size < PAGE_SIZE ? remaining_size : PAGE_SIZE;
+
+			/* keep id and size for resp afterward */
+			vif->meta[copy_prod].id = req->id;
+			vif->meta[copy_prod].size = bytes;
 
 			copy = vif->grant_copy_op + copy_prod;
 			copy->flags = GNTCOPY_dest_gref;
@@ -920,39 +930,39 @@ static int xenvif_rx_action(struct xenvif *vif)
 			copy->dest.u.ref = req->gref;
 #if 0
 			pr_debug("    [copy_prod=%u] id=%u d%d addr=%p mfn=%lx bytes=%lu ref=%u\n",
-				 copy_prod, req->id, vif->domid, buf_addr, copy->source.u.gmfn, bytes, req->gref);
+					copy_prod, req->id, vif->domid, buf_addr, copy->source.u.gmfn, bytes, req->gref);
 #endif
+			copy_prod++;
 		}
-
-		BUG_ON(copy_prod > MAX_GRANT_COPY_OPS);
-		gnttab_batch_copy(vif->grant_copy_op, copy_prod);
-
-		for (copy_cons = 0, remaining_size = size;
-				remaining_size > 0;
-				copy_cons++, remaining_size -= PAGE_SIZE) {
-			bytes = remaining_size < PAGE_SIZE ? remaining_size : PAGE_SIZE;
-			copy = vif->grant_copy_op + copy_cons;
-			status = copy->status == GNTST_okay ?
-				XEN_NETIF_RSP_OKAY : XEN_NETIF_RSP_ERROR;
-
-			/* FIXME: last flag arg to be appropriate like
-			 * XEN_NETRXF_data_validated */
-			resp = make_rx_response(vif, vif->meta[copy_cons].id,
-					status, 0, bytes, 0);  
-
-			RING_PUSH_RESPONSES_AND_CHECK_NOTIFY(&vif->rx, ret);
-
-			need_to_notify |= !!ret;
-#if 0
-			pr_debug("    [copy_cons=%u] id=%u status=%d bytes=%lu ret=%d need_to_notify=%d\n",
-				 copy_cons, vif->meta[copy_cons].id, status, bytes, ret, need_to_notify);
-#endif
-		}
-		if (need_to_notify)
-			notify_remote_via_irq(vif->rx_irq);
+		__rx_buf_queue_tail(&rxq, buf);
 	}
+gntcopy:
+	BUG_ON(copy_prod > MAX_GRANT_COPY_OPS);
+	gnttab_batch_copy(vif->grant_copy_op, copy_prod);
+
+	for (copy_cons = 0; copy_cons < copy_prod; copy_cons++) {
+		copy = vif->grant_copy_op + copy_cons;
+		status = copy->status == GNTST_okay ?
+			XEN_NETIF_RSP_OKAY : XEN_NETIF_RSP_ERROR;
+
+		/* FIXME: last flag arg to be appropriate like
+		 * XEN_NETRXF_data_validated */
+		resp = make_rx_response(vif, vif->meta[copy_cons].id,
+				status, 0, vif->meta[copy_cons].size, 0);  
+
+		RING_PUSH_RESPONSES_AND_CHECK_NOTIFY(&vif->rx, ret);
+
+		need_to_notify |= !!ret;
+#if 0
+		pr_debug("    [copy_cons=%u] id=%u status=%d bytes=%lu ret=%d need_to_notify=%d\n",
+			 copy_cons, vif->meta[copy_cons].id, status, vif->meta[copy_cons].size, ret, need_to_notify);
+#endif
+	}
+	if (need_to_notify)
+		notify_remote_via_irq(vif->rx_irq);
 	
-	if (buf->offset == buf->size)
+	/* FIXME: can be just moved out of critical path? */
+	while ((buf = __rx_buf_dequeue(&rxq)))
 		free_rx_buf(buf);
 
 	pr_debug("end of xmit to front: queue empty=%d\n", rx_buf_queue_empty(vif));
