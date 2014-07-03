@@ -902,8 +902,8 @@ static int xenvif_rx_action(struct xenvif *vif)
 			max_slots_needed = 1;
 
 			if (!xenvif_rx_ring_slots_available(vif, max_slots_needed)) {
-				pr_warn("RX ring is NOT available (slots=%u, addr=%p, off=%u)\n",
-						max_slots_needed, buf_addr, buf->offset);
+				pr_debug("RX ring is NOT available (slots=%u, addr=%p, off=%u)\n",
+					 max_slots_needed, buf_addr, buf->offset);
 				rx_buf_queue_head(vif, buf);
 				vif->rx_last_slots = max_slots_needed;
 				goto gntcopy;
