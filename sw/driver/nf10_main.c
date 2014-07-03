@@ -128,9 +128,21 @@ static int nf10_down(struct net_device *netdev)
 	return 0;
 }
 
+static int nf10_do_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
+{
+	return 0;
+}
+
+static struct net_device_stats *nf10_get_stats(struct net_device *dev)
+{
+	return &dev->stats;
+}
+
 static const struct net_device_ops nf10_netdev_ops = {
 	.ndo_open		= nf10_up,
 	.ndo_stop		= nf10_down,
+	.ndo_do_ioctl		= nf10_do_ioctl,
+	.ndo_get_stats		= nf10_get_stats,
 	.ndo_start_xmit		= nf10_start_xmit
 };
 
