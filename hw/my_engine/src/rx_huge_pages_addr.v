@@ -126,21 +126,21 @@ module rx_huge_pages_addr (
                 end
 
                 s2 : begin
+                    huge_page_addr_1[39:32] <= trn_rd[63:56];
+                    huge_page_addr_1[47:40] <= trn_rd[55:48];
+                    huge_page_addr_1[55:48] <= trn_rd[47:40];
+                    huge_page_addr_1[63:56] <= trn_rd[39:32];
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
-                        huge_page_addr_1[39:32] <= trn_rd[63:56];
-                        huge_page_addr_1[47:40] <= trn_rd[55:48];
-                        huge_page_addr_1[55:48] <= trn_rd[47:40];
-                        huge_page_addr_1[63:56] <= trn_rd[39:32];
                         state <= s0;
                     end
                 end
 
                 s3 : begin
+                    huge_page_addr_2[39:32] <= trn_rd[63:56];
+                    huge_page_addr_2[47:40] <= trn_rd[55:48];
+                    huge_page_addr_2[55:48] <= trn_rd[47:40];
+                    huge_page_addr_2[63:56] <= trn_rd[39:32];
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
-                        huge_page_addr_2[39:32] <= trn_rd[63:56];
-                        huge_page_addr_2[47:40] <= trn_rd[55:48];
-                        huge_page_addr_2[55:48] <= trn_rd[47:40];
-                        huge_page_addr_2[63:56] <= trn_rd[39:32];
                         state <= s0;
                     end
                 end
