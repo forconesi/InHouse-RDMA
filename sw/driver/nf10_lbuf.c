@@ -696,6 +696,13 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 
 	/* TODO: check if enough headroom exists, if not copy...
 	 * FIXME: replace 8 with macro */
+	if (skb->data - skb->head < 8) {
+		/* should be removed once copying is implemented 
+		 * now for no crash as soon as ifconfig is configured with IP */
+		pr_err("Error: this packet has no room for metadata\n");
+		spin_unlock_irqrestore(&tx_lock, flags);
+		return NETDEV_TX_OK;
+	}
 	skb_push(skb, 8);
 	((u32 *)skb->data)[0] = 0;
 	((u32 *)skb->data)[1] = skb->len - 8;
