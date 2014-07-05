@@ -34,9 +34,6 @@ struct nf10_adapter {
 	struct cdev cdev;
 	unsigned int nr_user_mmap;
 	wait_queue_head_t wq_user_intr;
-
-	/* for xen nfback */
-	struct nf10_xen_ops *xen_ops;
 };
 
 /* cmd for ctrl_irq() */
