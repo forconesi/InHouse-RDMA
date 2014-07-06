@@ -54,8 +54,8 @@ pgset "count $count"
 pgset "clone_skb 100000"
 pgset "pkt_size $pkt_size"	# nic adds 4B CRC
 pgset "delay $delay"
-pgset "dst 10.0.0.2"
-pgset "dst_mac 65:d1:0d:53:0f:00"
+pgset "dst 10.10.0.3"
+pgset "dst_mac 00:15:17:15:5d:74"
 
 echo "$PGDEV is configured: pkt_size=$pkt_size w/ count=$count and delay=$delay"
 
