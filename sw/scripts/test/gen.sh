@@ -1,8 +1,17 @@
 #!/bin/sh
-nr_pkt=100
-if [ $# -eq 1 ]; then
-	nr_pkt=$1
+[ "$arg" != "" ] || arg="-t"
+[ "$trace_file" != "" ] || trace_file=../../../pcap_input_files/1000_pkts-iperf
+[ -e "$trace_file" ] || trace_file=../../pcap_input_files/1000_pkts-iperf
+if [ ! -e "$trace_file" ]; then
+	echo "trace file($trace_file) is not found. specify 'trace_file' env var"
+	exit
 fi
 
-tcpreplay -t -i nf0 /root/InHouse-RDMA/pcap_input_files/${nr_pkt}_pkts-iperf
-#tcpreplay -p 1 -i nf0 /root/InHouse-RDMA/pcap_input_files/${nr_pkt}_pkts-iperf
+if [ $# -ne 2 ]; then
+	echo "Usage: $0 <netif> <# of packet of iperf trace (<=1000)>"
+	exit
+fi
+netif=$1
+nr_pkt=$2
+
+tcpreplay $arg -i $netif -L $nr_pkt $trace_file

@@ -260,7 +260,7 @@ static void free_pdesc(struct nf10_adapter *adapter,
 	BUG_ON(!desc->kern_addr);
 
 	/* FIXME: skb-to-desc - currently, assume one skb per desc */
-	BUG_ON(desc->skb->data != desc->kern_addr);
+	//BUG_ON(desc->skb->data != desc->kern_addr);
 
 	pr_debug("gctx: dma_addr=%p skb=%p\n", (void *)desc->dma_addr, desc->skb);
 
@@ -684,6 +684,11 @@ static int consume_rx_desc(struct desc *desc)
 	if (rx_desc_empty())
 		return -1;
 
+	if (LBUF_IS_VALID(LBUF_NR_DWORDS(rx_cons_desc()->kern_addr)) == false) {
+		pr_debug("nothing to consume for rx\n");
+		return -1;
+	}
+
 	/* copy metadata to allow for further producing rx buffer */
 	*desc = *rx_cons_desc();
 	clean_desc(rx_cons_desc());
@@ -723,6 +728,7 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 	struct desc *desc;
 	u32 nr_qwords;
 	unsigned long flags;
+	unsigned int headroom;
 
 	spin_lock_irqsave(&tx_lock, flags);
 
@@ -743,22 +749,22 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 
 	desc = tx_prod_desc();
 
-	/* TODO: check availability */
-
-	/* TODO: check if enough headroom exists, if not copy...
-	 * FIXME: replace 8 with macro */
-	if (skb->data - skb->head < 8) {
-		/* should be removed once copying is implemented 
-		 * now for no crash as soon as ifconfig is configured with IP */
-		pr_err("Error: this packet has no room for metadata\n");
-		spin_unlock_irqrestore(&tx_lock, flags);
-		return NETDEV_TX_OK;
+	/* TODO: if skb is shared, must allocate separate buf
+	 * so, w/o it, pktgen is not working */
+	if (!skb_shared(skb) &&
+	    ((headroom = skb_headroom(skb)) < 8 ||
+	     (((unsigned long)skb->data & 0x3) != 0))) {
+		pskb_expand_head(skb, 8 - headroom, 0, GFP_ATOMIC);
+		pr_debug("NOTE: skb is expanded(headroom=%u->%u head=%p data=%p len=%u)",
+			 headroom, skb_headroom(skb), skb->head, skb->data, skb->len);
 	}
 	skb_push(skb, 8);
 	((u32 *)skb->data)[0] = 0;
 	((u32 *)skb->data)[1] = skb->len - 8;
 
-	/* FIXME: do we need padding something at tailroom? */
+	/* FIXME: dword-align check? */
+	if (((unsigned long)skb->data & 0x3) != 0)
+		pr_warn("WARN: skb->data(%p) is not dword-aligned!\n", skb->data);
 
 	nr_qwords = ALIGN(skb->len, 8) >> 3;
 
