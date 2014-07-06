@@ -721,14 +721,48 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	*work_done = 1;
 }
 
+static int lbuf_xmit(struct nf10_adapter *adapter, void *buf_addr,
+		     unsigned int len, struct sk_buff *skb)
+{
+	u32 nr_qwords;
+	struct desc *desc = tx_prod_desc();
+
+	/* FIXME: dword-align check? */
+	if (((unsigned long)buf_addr & 0x3) != 0)
+		pr_warn("WARN: buf_addr(%p) is not dword-aligned!\n", buf_addr);
+
+	nr_qwords = ALIGN(len, 8) >> 3;
+
+	desc->dma_addr = pci_map_single(adapter->pdev, buf_addr, len,
+					PCI_DMA_TODEVICE);
+	if (pci_dma_mapping_error(adapter->pdev, desc->dma_addr)) {
+		netif_err(adapter, probe, adapter->netdev,
+			  "failed to map to dma addr (kern_addr=%p)\n",
+			  desc->kern_addr);
+		return -EIO;
+	}
+	desc->kern_addr = buf_addr;
+	desc->skb = skb;
+
+	pr_debug("\trqtx[%u]: desc=%p len=%u, dma_addr/kern_addr/skb=%p/%p/%p, nr_qwords=%u, addr=0x%x, stat=0x%x\n",
+		 tx_prod(), desc, len, (void *)desc->dma_addr, desc->kern_addr, desc->skb,
+		 nr_qwords, tx_addr_off(tx_prod()), tx_stat_off(tx_prod()));
+
+	nf10_writeq(adapter, tx_addr_off(tx_prod()), desc->dma_addr);
+	nf10_writel(adapter, tx_stat_off(tx_prod()), nr_qwords);
+
+	inc_tx_prod();
+
+	return 0;
+}
+
 static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 					struct sk_buff *skb,
 					struct net_device *dev)
 {
-	struct desc *desc;
-	u32 nr_qwords;
 	unsigned long flags;
 	unsigned int headroom;
+	int ret;
 
 	spin_lock_irqsave(&tx_lock, flags);
 
@@ -747,8 +781,6 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 	}
 	debug_count = 0;
 
-	desc = tx_prod_desc();
-
 	/* TODO: if skb is shared, must allocate separate buf
 	 * so, w/o it, pktgen is not working */
 	if (!skb_shared(skb) &&
@@ -762,38 +794,11 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 	((u32 *)skb->data)[0] = 0;
 	((u32 *)skb->data)[1] = skb->len - 8;
 
-	/* FIXME: dword-align check? */
-	if (((unsigned long)skb->data & 0x3) != 0)
-		pr_warn("WARN: skb->data(%p) is not dword-aligned!\n", skb->data);
-
-	nr_qwords = ALIGN(skb->len, 8) >> 3;
-
-	/* FIXME: skb-to-desc */
-	desc->dma_addr = pci_map_single(adapter->pdev, skb->data, skb->len,
-					PCI_DMA_TODEVICE);
-	if (pci_dma_mapping_error(adapter->pdev, desc->dma_addr)) {
-		netif_err(adapter, probe, adapter->netdev,
-			  "failed to map to dma addr (kern_addr=%p)\n",
-			  desc->kern_addr);
-		spin_unlock_irqrestore(&tx_lock, flags);
-		return NETDEV_TX_BUSY;
-	}
-	desc->kern_addr = skb->data;
-	desc->skb = skb;
-	/* TODO: check dma map error */
-
-	pr_debug("\trqtx[%u]: desc=%p len=%u, head=%p, dma_addr/kern_addr/skb=%p/%p/%p, nr_qwords=%u, addr=0x%x, stat=0x%x\n",
-		 tx_prod(), desc, skb->len, skb->head, (void *)desc->dma_addr, desc->kern_addr, desc->skb,
-		 nr_qwords, tx_addr_off(tx_prod()), tx_stat_off(tx_prod()));
-
-	nf10_writeq(adapter, tx_addr_off(tx_prod()), desc->dma_addr);
-	nf10_writel(adapter, tx_stat_off(tx_prod()), nr_qwords);
-
-	inc_tx_prod();
+	ret = lbuf_xmit(adapter, skb->data, skb->len, skb);
 
 	spin_unlock_irqrestore(&tx_lock, flags);
 
-	return NETDEV_TX_OK;
+	return ret == 0 ? NETDEV_TX_OK : NETDEV_TX_BUSY;
 }
 
 static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
