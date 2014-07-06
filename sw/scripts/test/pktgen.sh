@@ -51,7 +51,7 @@ if [ ! -e $PGDEV ]; then
 	exit
 fi
 pgset "count $count"
-pgset "clone_skb 100000"
+pgset "clone_skb $count"
 pgset "pkt_size $pkt_size"	# nic adds 4B CRC
 pgset "delay $delay"
 pgset "dst 10.0.0.2"
