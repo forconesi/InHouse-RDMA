@@ -1,0 +1,10 @@
+#cores
+hw/my_engine/coregen/
+#no cores xco
+!*.xco
+!*.xaw
+#
+hw/my_engine/ise
+#dont
+!*.bit
+!*.xise
