@@ -10,7 +10,7 @@
 #include "nf10.h"
 #include "nf10_user.h"
 
-u64 nf10_test_dev_addr = 0x000f530dd165;
+u64 nf10_test_dev_addr = 0x000f530dd164;
 
 #define DEFAULT_MSG_ENABLE (NETIF_MSG_DRV|NETIF_MSG_PROBE|NETIF_MSG_LINK|NETIF_MSG_IFDOWN|NETIF_MSG_IFUP|NETIF_MSG_RX_ERR)
 static int debug = -1;

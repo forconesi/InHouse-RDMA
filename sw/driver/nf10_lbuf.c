@@ -761,7 +761,7 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 					struct net_device *dev)
 {
 	unsigned long flags;
-	unsigned int headroom;
+	unsigned int headroom, headroom_to_expand;
 	int ret;
 
 	spin_lock_irqsave(&tx_lock, flags);
@@ -785,8 +785,11 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 	 * so, w/o it, pktgen is not working */
 	if (!skb_shared(skb) &&
 	    ((headroom = skb_headroom(skb)) < 8 ||
-	     (((unsigned long)skb->data & 0x3) != 0))) {
-		pskb_expand_head(skb, 8 - headroom, 0, GFP_ATOMIC);
+	     !IS_ALIGNED((unsigned long)skb->data, 4))) {
+		headroom_to_expand = headroom < 8 ? 8 - headroom :
+			ALIGN((unsigned long)skb->data, 4) - (unsigned long)skb->data;
+
+		pskb_expand_head(skb, headroom_to_expand, 0, GFP_ATOMIC);
 		pr_debug("NOTE: skb is expanded(headroom=%u->%u head=%p data=%p len=%u)",
 			 headroom, skb_headroom(skb), skb->head, skb->data, skb->len);
 	}
@@ -795,6 +798,8 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 	((u32 *)skb->data)[1] = skb->len - 8;
 
 	ret = lbuf_xmit(adapter, skb->data, skb->len, skb);
+
+	adapter->netdev->stats.tx_packets++;
 
 	spin_unlock_irqrestore(&tx_lock, flags);
 
