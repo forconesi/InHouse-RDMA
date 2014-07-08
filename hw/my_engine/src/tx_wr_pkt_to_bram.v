@@ -517,6 +517,9 @@ module tx_wr_pkt_to_bram (
                         send_notification_huge_page_1 <= 1'b1;
                         huge_page_1_notifications_fsm <= s4;
                     end
+                    else begin
+                        huge_page_1_notifications_fsm <= s1;
+                    end
                 end
 
                 s4 : begin
@@ -583,6 +586,9 @@ module tx_wr_pkt_to_bram (
                     if (qwords_to_rd_huge_page_2 == qwords_received_huge_page_2) begin
                         send_notification_huge_page_2 <= 1'b1;
                         huge_page_2_notifications_fsm <= s4;
+                    end
+                    else begin
+                        huge_page_2_notifications_fsm <= s1;
                     end
                 end
 

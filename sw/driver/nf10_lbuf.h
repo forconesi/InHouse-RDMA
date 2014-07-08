@@ -7,6 +7,7 @@
 #ifdef __KERNEL__
 #include <linux/types.h>
 #include <linux/pci.h>
+#include <linux/list.h>
 #include "nf10.h"
 
 /* offset to bar2 address of the card */
@@ -31,6 +32,58 @@
 
 struct nf10_adapter;
 extern void nf10_lbuf_set_hw_ops(struct nf10_adapter *adapter);
+
+struct desc {
+	void			*kern_addr;
+	dma_addr_t		dma_addr;
+	struct sk_buff		*skb;
+	u32			size;
+	u32			offset;
+	struct list_head	list;
+};
+#define clean_desc(desc)	\
+	do { desc->kern_addr = NULL; } while(0)
+
+struct lbuf_head {
+	struct list_head head;
+	spinlock_t lock;
+};
+
+static inline void lbuf_head_init(struct lbuf_head *head)
+{
+	INIT_LIST_HEAD(&head->head);
+	spin_lock_init(&head->lock);
+}
+
+static inline int lbuf_queue_empty(struct lbuf_head *head)
+{
+	return list_empty(&head->head);
+}
+
+static inline void __lbuf_queue_tail(struct lbuf_head *head, struct desc *desc)
+{
+	list_add_tail(&desc->list, &head->head);
+}
+
+static inline void __lbuf_queue_head(struct lbuf_head *head, struct desc *desc)
+{
+	list_add(&desc->list, &head->head);
+}
+
+static inline struct desc *__lbuf_dequeue(struct lbuf_head *head)
+{
+	struct desc *desc = NULL;
+
+	if (!list_empty(&head->head)) {
+		desc = list_first_entry(&head->head, struct desc, list);
+		list_del(&desc->list);
+	}
+	return desc;
+}
+extern void lbuf_queue_tail(struct lbuf_head *head, struct desc *desc);
+extern void lbuf_queue_head(struct lbuf_head *head, struct desc *desc);
+extern struct desc *lbuf_dequeue(struct lbuf_head *head);
+extern void release_lbuf(struct nf10_adapter *adapter, struct desc *desc);
 #endif
 
 #endif

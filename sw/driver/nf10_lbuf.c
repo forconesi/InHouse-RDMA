@@ -9,13 +9,7 @@
 static struct skbpool_entry skb_free_list;
 #endif
 
-struct desc {
-	void		*kern_addr;
-	dma_addr_t	dma_addr;
-	struct sk_buff	*skb;
-};
-#define clean_desc(desc)	\
-	do { desc->kern_addr = NULL; } while(0)
+static struct kmem_cache *desc_cache;
 
 struct large_buffer {
 	struct desc descs[2][NR_LBUF];	/* 0=TX and 1=RX */
@@ -120,25 +114,21 @@ static inline void *alloc_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 	desc->kern_addr = pci_alloc_consistent(adapter->pdev, LBUF_SIZE,
 					       &desc->dma_addr);
 #endif
+	desc->size = LBUF_SIZE;
+	desc->offset = 0;
 	desc->skb = NULL;
 
 	return desc->kern_addr;
 }
 
-static inline void __free_lbuf(struct nf10_adapter *adapter,
-			       void *kern_addr, dma_addr_t dma_addr)
-{
-#ifndef CONFIG_LBUF_COHERENT
-	__free_pages(virt_to_page(kern_addr), LBUF_ORDER);
-#else
-	pci_free_consistent(adapter->pdev, LBUF_SIZE, kern_addr, dma_addr);
-#endif
-
-}
-
 static inline void free_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 {
-	__free_lbuf(adapter, desc->kern_addr, desc->dma_addr);
+#ifndef CONFIG_LBUF_COHERENT
+	__free_pages(virt_to_page(desc->kern_addr), LBUF_ORDER);
+#else
+	pci_free_consistent(adapter->pdev, LBUF_SIZE,
+			    desc->kern_addr, desc->dma_addr);
+#endif
 	/* TODO: if skb is not NULL, release it safely */
 }
 
@@ -174,6 +164,52 @@ static int alloc_and_map_lbuf(struct nf10_adapter *adapter,
 #endif
 	pr_debug("%s: addr=(kern=%p:dma=%p)\n", __func__, desc->kern_addr, (void *)desc->dma_addr);
 	return 0;
+}
+
+/* functions for desc */
+static struct desc *alloc_desc(void)
+{
+	return kmem_cache_alloc(desc_cache, GFP_ATOMIC);
+}
+
+static void free_desc(struct desc *desc)
+{
+	kmem_cache_free(desc_cache, desc);
+}
+
+void release_lbuf(struct nf10_adapter *adapter, struct desc *desc)
+{
+	netif_dbg(adapter, drv, adapter->netdev,
+		  "release lbuf from xen(kern_addr/dma_addr/size=%p/%p=%u)\n",
+		  desc->kern_addr, (void *)desc->dma_addr, desc->size);
+	free_lbuf(adapter, desc);
+	free_desc(desc);
+}
+
+void lbuf_queue_tail(struct lbuf_head *head, struct desc *desc)
+{
+	spin_lock(&head->lock);
+	__lbuf_queue_tail(head, desc);
+	spin_unlock(&head->lock);
+}
+
+void lbuf_queue_head(struct lbuf_head *head, struct desc *desc)
+{
+	/* no need of lockless currently */
+	spin_lock(&head->lock);
+	__lbuf_queue_head(head, desc);
+	spin_unlock(&head->lock);
+}
+
+struct desc *lbuf_dequeue(struct lbuf_head *head)
+{
+	struct desc *desc;
+
+	spin_lock(&head->lock);
+	desc = __lbuf_dequeue(head);
+	spin_unlock(&head->lock);
+
+	return desc;
 }
 
 static bool desc_full(int rx)
@@ -224,7 +260,7 @@ static void free_pdesc(struct nf10_adapter *adapter,
 	BUG_ON(!desc->kern_addr);
 
 	/* FIXME: skb-to-desc - currently, assume one skb per desc */
-	BUG_ON(desc->skb->data != desc->kern_addr);
+	//BUG_ON(desc->skb->data != desc->kern_addr);
 
 	pr_debug("gctx: dma_addr=%p skb=%p\n", (void *)desc->dma_addr, desc->skb);
 
@@ -500,8 +536,15 @@ static void deliver_lbuf(struct nf10_adapter *adapter, struct desc *desc)
 	/* if failed to deliver to frontend, fallback with host processing.
 	 * currently, domid is set as an arbitrary number (1), since we don't
 	 * have packet classification in hardware right now */
-	if (xenvif_start_xmit(1 /* FIXME */,
-			      buf_addr, desc->dma_addr, nr_dwords << 2) == 0) {
+	if (xenvif_connected(1 /* FIXME */)) {
+		struct desc *xdesc = alloc_desc();
+		if (xdesc == NULL) {
+			pr_err("failed to alloc desc for xen\n");
+			return;
+		}
+		*xdesc = *desc;
+		xdesc->size = nr_dwords << 2;
+		xenvif_start_xmit(1 /* FIXME */, xdesc);
 		netif_dbg(adapter, rx_status, adapter->netdev,
 			  "RX lbuf(%p) delivered to frontend nr_dwords=%u\n",
 			  buf_addr, nr_dwords);
@@ -538,10 +581,6 @@ static struct nf10_user_ops lbuf_user_ops = {
 	.prepare_rx_buffer	= nf10_lbuf_prepare_rx,
 };
 
-static struct nf10_xen_ops lbuf_xen_ops = {
-	.free_buffer		= __free_lbuf,
-};
-
 /* nf10_hw_ops functions */
 static int nf10_lbuf_init(struct nf10_adapter *adapter)
 {
@@ -564,17 +603,28 @@ static int nf10_lbuf_init(struct nf10_adapter *adapter)
 		return err;
 	}
 #endif
+	desc_cache = kmem_cache_create("lbuf_desc",
+				       sizeof(struct desc),
+				       __alignof__(struct desc),
+				       0, NULL);
+	if (desc_cache == NULL) {
+		pr_err("failed to alloc desc_cache\n");
+		return -ENOMEM;
+	}
+
 	spin_lock_init(&tx_lock);
 	pending_gc_cache = kmem_cache_create("pending_gc_desc",
 					     sizeof(struct pending_gc_desc),
 					     __alignof__(struct pending_gc_desc),
 					     0, NULL);
-	if (!pending_gc_cache)
+	if (!pending_gc_cache) {
+		kmem_cache_destroy(desc_cache);
+		pr_err("failed to alloc pending_gc_cache\n");
 		return -ENOMEM;
+	}
 
 	lbuf_hw.adapter = adapter;
 	adapter->user_ops = &lbuf_user_ops;
-	adapter->xen_ops  = &lbuf_xen_ops;
 
 	return 0;
 }
@@ -594,6 +644,7 @@ static void nf10_lbuf_free(struct nf10_adapter *adapter)
 	BUG_ON(!clean_tx_pending_gc(adapter, 0));
 	spin_unlock_irqrestore(&tx_lock, flags);
 
+	kmem_cache_destroy(desc_cache);
 	kmem_cache_destroy(pending_gc_cache);
 }
 
@@ -633,6 +684,11 @@ static int consume_rx_desc(struct desc *desc)
 	if (rx_desc_empty())
 		return -1;
 
+	if (LBUF_IS_VALID(LBUF_NR_DWORDS(rx_cons_desc()->kern_addr)) == false) {
+		pr_debug("nothing to consume for rx\n");
+		return -1;
+	}
+
 	/* copy metadata to allow for further producing rx buffer */
 	*desc = *rx_cons_desc();
 	clean_desc(rx_cons_desc());
@@ -665,13 +721,48 @@ static void nf10_lbuf_process_rx_irq(struct nf10_adapter *adapter,
 	*work_done = 1;
 }
 
+static int lbuf_xmit(struct nf10_adapter *adapter, void *buf_addr,
+		     unsigned int len, struct sk_buff *skb)
+{
+	u32 nr_qwords;
+	struct desc *desc = tx_prod_desc();
+
+	/* FIXME: dword-align check? */
+	if (((unsigned long)buf_addr & 0x3) != 0)
+		pr_warn("WARN: buf_addr(%p) is not dword-aligned!\n", buf_addr);
+
+	nr_qwords = ALIGN(len, 8) >> 3;
+
+	desc->dma_addr = pci_map_single(adapter->pdev, buf_addr, len,
+					PCI_DMA_TODEVICE);
+	if (pci_dma_mapping_error(adapter->pdev, desc->dma_addr)) {
+		netif_err(adapter, probe, adapter->netdev,
+			  "failed to map to dma addr (kern_addr=%p)\n",
+			  desc->kern_addr);
+		return -EIO;
+	}
+	desc->kern_addr = buf_addr;
+	desc->skb = skb;
+
+	pr_debug("\trqtx[%u]: desc=%p len=%u, dma_addr/kern_addr/skb=%p/%p/%p, nr_qwords=%u, addr=0x%x, stat=0x%x\n",
+		 tx_prod(), desc, len, (void *)desc->dma_addr, desc->kern_addr, desc->skb,
+		 nr_qwords, tx_addr_off(tx_prod()), tx_stat_off(tx_prod()));
+
+	nf10_writeq(adapter, tx_addr_off(tx_prod()), desc->dma_addr);
+	nf10_writel(adapter, tx_stat_off(tx_prod()), nr_qwords);
+
+	inc_tx_prod();
+
+	return 0;
+}
+
 static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 					struct sk_buff *skb,
 					struct net_device *dev)
 {
-	struct desc *desc;
-	u32 nr_qwords;
 	unsigned long flags;
+	unsigned int headroom, headroom_to_expand;
+	int ret;
 
 	spin_lock_irqsave(&tx_lock, flags);
 
@@ -690,53 +781,29 @@ static netdev_tx_t nf10_lbuf_start_xmit(struct nf10_adapter *adapter,
 	}
 	debug_count = 0;
 
-	desc = tx_prod_desc();
+	/* TODO: if skb is shared, must allocate separate buf
+	 * so, w/o it, pktgen is not working */
+	if (!skb_shared(skb) &&
+	    ((headroom = skb_headroom(skb)) < 8 ||
+	     !IS_ALIGNED((unsigned long)skb->data, 4))) {
+		headroom_to_expand = headroom < 8 ? 8 - headroom :
+			ALIGN((unsigned long)skb->data, 4) - (unsigned long)skb->data;
 
-	/* TODO: check availability */
-
-	/* TODO: check if enough headroom exists, if not copy...
-	 * FIXME: replace 8 with macro */
-	if (skb->data - skb->head < 8) {
-		/* should be removed once copying is implemented 
-		 * now for no crash as soon as ifconfig is configured with IP */
-		pr_err("Error: this packet has no room for metadata\n");
-		spin_unlock_irqrestore(&tx_lock, flags);
-		return NETDEV_TX_OK;
+		pskb_expand_head(skb, headroom_to_expand, 0, GFP_ATOMIC);
+		pr_debug("NOTE: skb is expanded(headroom=%u->%u head=%p data=%p len=%u)",
+			 headroom, skb_headroom(skb), skb->head, skb->data, skb->len);
 	}
 	skb_push(skb, 8);
 	((u32 *)skb->data)[0] = 0;
 	((u32 *)skb->data)[1] = skb->len - 8;
 
-	/* FIXME: do we need padding something at tailroom? */
+	ret = lbuf_xmit(adapter, skb->data, skb->len, skb);
 
-	nr_qwords = ALIGN(skb->len, 8) >> 3;
-
-	/* FIXME: skb-to-desc */
-	desc->dma_addr = pci_map_single(adapter->pdev, skb->data, skb->len,
-					PCI_DMA_TODEVICE);
-	if (pci_dma_mapping_error(adapter->pdev, desc->dma_addr)) {
-		netif_err(adapter, probe, adapter->netdev,
-			  "failed to map to dma addr (kern_addr=%p)\n",
-			  desc->kern_addr);
-		spin_unlock_irqrestore(&tx_lock, flags);
-		return NETDEV_TX_BUSY;
-	}
-	desc->kern_addr = skb->data;
-	desc->skb = skb;
-	/* TODO: check dma map error */
-
-	pr_debug("\trqtx[%u]: desc=%p len=%u, head=%p, dma_addr/kern_addr/skb=%p/%p/%p, nr_qwords=%u, addr=0x%x, stat=0x%x\n",
-		 tx_prod(), desc, skb->len, skb->head, (void *)desc->dma_addr, desc->kern_addr, desc->skb,
-		 nr_qwords, tx_addr_off(tx_prod()), tx_stat_off(tx_prod()));
-
-	nf10_writeq(adapter, tx_addr_off(tx_prod()), desc->dma_addr);
-	nf10_writel(adapter, tx_stat_off(tx_prod()), nr_qwords);
-
-	inc_tx_prod();
+	adapter->netdev->stats.tx_packets++;
 
 	spin_unlock_irqrestore(&tx_lock, flags);
 
-	return NETDEV_TX_OK;
+	return ret == 0 ? NETDEV_TX_OK : NETDEV_TX_BUSY;
 }
 
 static int nf10_lbuf_clean_tx_irq(struct nf10_adapter *adapter)
