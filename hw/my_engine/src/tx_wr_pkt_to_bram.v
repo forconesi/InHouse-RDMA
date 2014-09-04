@@ -1,6 +1,7 @@
-
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
+`timescale 1ns / 1ps
+//`default_nettype none
 `include "includes.v"
 
 `define CPL_MEM_RD64_FMT_TYPE 7'b10_01010
@@ -34,10 +35,10 @@ module tx_wr_pkt_to_bram (
     output reg   [63:0]     huge_page_addr_read_from,
     output reg              read_chunk,
     input        [3:0]      tlp_tag,
-    output reg   [8:0]      qwords_to_rd,
+    output       [8:0]      qwords_to_rd,
     input                   read_chunk_ack,
-    output reg              send_huge_page_rd_completed,
-    input                   send_huge_page_rd_completed_ack,
+    output reg              send_rd_completed,
+    input                   send_rd_completed_ack,
 
     output reg              notify,
     output reg   [63:0]     notification_message,
@@ -47,14 +48,12 @@ module tx_wr_pkt_to_bram (
     input                   send_interrupt_ack,
 
     // Internal memory driver
-    output reg  [`BF:0]     wr_addr,
+    output reg  [8:0]       wr_addr,
     output reg  [63:0]      wr_data,
     output reg              wr_en,
 
-    input       [`BF:0]     commited_rd_addr,             // 156.25 MHz driven
-    input                   commited_rd_addr_change,      // 156.25 MHz driven
-    output reg              commited_wr_addr_change,      // to 156.25 MHz
-    output reg  [`BF:0]     commited_wr_addr
+    input       [9:0]       commited_rd_addr,
+    output reg  [9:0]       commited_wr_addr
     );
 
     wire            reset_n;
@@ -81,14 +80,6 @@ module tx_wr_pkt_to_bram (
     localparam hp2 = 2'b10;
 
     //-------------------------------------------------------
-    // Local 156.25 MHz signal synch
-    //-------------------------------------------------------
-    reg     [`BF:0] commited_rd_addr_reg0;
-    reg     [`BF:0] commited_rd_addr_reg1;
-    reg             commited_rd_addr_change_reg0;
-    reg             commited_rd_addr_change_reg1;
-    
-    //-------------------------------------------------------
     // Local current_huge_page_addr
     //-------------------------------------------------------
     reg     [63:0]  current_huge_page_addr;
@@ -104,11 +95,11 @@ module tx_wr_pkt_to_bram (
     //-------------------------------------------------------   
     reg             return_huge_page_to_host;
     reg     [14:0]  trigger_rd_tlp_fsm;
-    (* KEEP = "TRUE" *)reg     [`BF:0] diff;
-    reg     [8:0]   next_wr_addr;
-    reg     [8:0]   look_ahead_next_wr_addr;
-    reg     [8:0]   huge_page_qwords_counter;                                   // the width can be less
-    reg     [8:0]   look_ahead_huge_page_qwords_counter;
+    /*(* KEEP = "TRUE" *)*/reg     [9:0] diff;
+    reg     [9:0]   next_wr_addr;
+    reg     [9:0]   look_ahead_next_wr_addr;
+    reg     [31:0]  huge_page_qwords_counter;                                   // the width can be less
+    reg     [31:0]  look_ahead_huge_page_qwords_counter;
     reg     [63:0]  look_ahead_huge_page_addr_read_from;
     reg     [31:0]  remaining_qwords;
     reg     [1:0]   tag_to_hp[0:15];
@@ -120,6 +111,7 @@ module tx_wr_pkt_to_bram (
     reg     [9:0]   aux_diff_512;
     reg     [9:0]   aux_diff_256;
     reg     [9:0]   aux_diff_128;
+    reg     [9:0]   qwords_to_rd_i;
     
     //-------------------------------------------------------
     // Local trigger_interrupts
@@ -131,9 +123,9 @@ module tx_wr_pkt_to_bram (
     //-------------------------------------------------------
     reg     [14:0]  huge_page_1_notifications_fsm;
     reg     [63:0]  address_to_notify_huge_page_1;
-    reg     [8:0]   qwords_to_rd_huge_page_1;
-    reg     [8:0]   qwords_received_huge_page_1;
-    reg     [8:0]   next_qwords_received_huge_page_1;
+    reg     [31:0]  qwords_to_rd_huge_page_1;
+    reg     [31:0]  qwords_received_huge_page_1;
+    reg     [31:0]  next_qwords_received_huge_page_1;
     reg             send_notification_huge_page_1;
     reg             send_notification_huge_page_1_ack;
     reg             waiting_data_huge_page_1;
@@ -144,9 +136,9 @@ module tx_wr_pkt_to_bram (
     //-------------------------------------------------------
     reg     [14:0]  huge_page_2_notifications_fsm;
     reg     [63:0]  address_to_notify_huge_page_2;
-    reg     [8:0]   qwords_to_rd_huge_page_2;
-    reg     [8:0]   qwords_received_huge_page_2;
-    reg     [8:0]   next_qwords_received_huge_page_2;
+    reg     [31:0]  qwords_to_rd_huge_page_2;
+    reg     [31:0]  qwords_received_huge_page_2;
+    reg     [31:0]  next_qwords_received_huge_page_2;
     reg             send_notification_huge_page_2;
     reg             send_notification_huge_page_2_ack;
     reg             waiting_data_huge_page_2;
@@ -158,50 +150,16 @@ module tx_wr_pkt_to_bram (
     reg     [14:0]  notification_mixer_fsm;
 
     //-------------------------------------------------------
-    // Local pulse generation for 156.25 MHz domain
-    //-------------------------------------------------------
-    reg     [14:0]  pulse_gen_fsm1;
-    reg     [1:0]   wait_gap;
-    reg     [`BF:0] commited_wr_addr_aux0;
-    reg     [`BF:0] commited_wr_addr_aux1;
-
-    //-------------------------------------------------------
     // Local completion_tlp & write to bram (wr_to_bram_fsm)
     //-------------------------------------------------------
     reg     [14:0]  wr_to_bram_fsm;
     reg     [8:0]   qwords_on_tlp;
     reg             completion_received;
     reg     [31:0]  dw_aux;
-    reg     [`BF:0] look_ahead_wr_addr;
-    reg     [`BF:0] commited_wr_addr_internal;
+    reg     [9:0]   look_ahead_wr_addr;
     reg     [3:0]   this_tlp_tag;
 
     assign reset_n = ~trn_lnk_up_n;
-
-    ////////////////////////////////////////////////
-    // 156.25 MHz signal synch
-    ////////////////////////////////////////////////
-    always @( posedge trn_clk or negedge reset_n ) begin
-
-        if (!reset_n ) begin  // reset
-            commited_rd_addr_reg0 <= 'b0;
-            commited_rd_addr_reg1 <= 'b0;
-            commited_rd_addr_change_reg0 <= 1'b0;
-            commited_rd_addr_change_reg1 <= 1'b0;
-        end
-
-        else begin  // not reset
-            commited_rd_addr_reg0 <= commited_rd_addr;
-
-            commited_rd_addr_change_reg0 <= commited_rd_addr_change;
-            commited_rd_addr_change_reg1 <= commited_rd_addr_change_reg0;
-
-            if (commited_rd_addr_change_reg1) begin
-                commited_rd_addr_reg1 <= commited_rd_addr_reg0;
-            end
-
-        end     // not reset
-    end  //always
 
     ////////////////////////////////////////////////
     // current_huge_page_addr
@@ -285,6 +243,8 @@ module tx_wr_pkt_to_bram (
         end     // not reset
     end  //always
 
+    assign qwords_to_rd = qwords_to_rd_i;
+
     ////////////////////////////////////////////////
     // trigger_rd_tlp
     ////////////////////////////////////////////////
@@ -293,7 +253,7 @@ module tx_wr_pkt_to_bram (
         if (!reset_n ) begin  // reset
             return_huge_page_to_host <= 1'b0;
             read_chunk <= 1'b0;
-            send_huge_page_rd_completed <= 1'b0;
+            send_rd_completed <= 1'b0;
             diff <= 'b0;
             next_wr_addr <= 'b0;
             trigger_rd_tlp_fsm <= s0;
@@ -302,7 +262,7 @@ module tx_wr_pkt_to_bram (
         else begin  // not reset
 
             return_huge_page_to_host <= 1'b0;
-            diff <= next_wr_addr + (~commited_rd_addr_reg1) + 1;
+            diff <= next_wr_addr + (~commited_rd_addr) + 1;
             remaining_qwords <= current_huge_page_qwords + (~huge_page_qwords_counter) + 1;
 
             aux_diff0 <= diff + remaining_qwords;   // desired
@@ -324,61 +284,98 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s1 : begin
-                    // extra cycle for aux_signals
+                    // remaining_qwords
                     trigger_rd_tlp_fsm <= s2;
                 end
 
                 s2 : begin
-                    if (!aux_diff0[9]) begin
-                        qwords_to_rd <= remaining_qwords;
-                        read_chunk <= 1'b1;
+                    if (remaining_qwords > 'h200) begin
                         trigger_rd_tlp_fsm <= s3;
                     end
-                    else if (!aux_diff_4k[9]) begin
-                        qwords_to_rd <= 'h200;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s3;
-                    end
-                    else if (!aux_diff_2k[9]) begin
-                        qwords_to_rd <= 'h100;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s3;
-                    end
-                    else if (!aux_diff_1k[9]) begin
-                        qwords_to_rd <= 'h080;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s3;
-                    end
-                    else if (!aux_diff_512[9]) begin
-                        qwords_to_rd <= 'h040;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s3;
-                    end
-                    else if (!aux_diff_256[9]) begin
-                        qwords_to_rd <= 'h020;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s3;
-                    end
-                    else if (!aux_diff_128[9]) begin
-                        qwords_to_rd <= 'h010;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s3;
-                    end
-                end
-
-                s3 : begin
-                    look_ahead_next_wr_addr <= next_wr_addr + qwords_to_rd;
-                    look_ahead_huge_page_addr_read_from <= huge_page_addr_read_from + {qwords_to_rd, 3'b0};
-                    look_ahead_huge_page_qwords_counter <= huge_page_qwords_counter + qwords_to_rd;
-
-                    tlp_tag_sent <= tlp_tag;
-                    if (read_chunk_ack) begin
-                        read_chunk <= 1'b0;
+                    else begin
                         trigger_rd_tlp_fsm <= s4;
                     end
                 end
 
+                s3 : begin
+                    if (!diff) begin
+                        qwords_to_rd_i <= 'h200;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_2k[9]) begin
+                        qwords_to_rd_i <= 'h100;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_1k[9]) begin
+                        qwords_to_rd_i <= 'h080;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_512[9]) begin
+                        qwords_to_rd_i <= 'h040;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_256[9]) begin
+                        qwords_to_rd_i <= 'h020;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_128[9]) begin
+                        qwords_to_rd_i <= 'h010;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                end
+
                 s4 : begin
+                    if (!aux_diff0[9]) begin
+                        qwords_to_rd_i <= remaining_qwords;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_2k[9]) begin
+                        qwords_to_rd_i <= 'h100;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_1k[9]) begin
+                        qwords_to_rd_i <= 'h080;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_512[9]) begin
+                        qwords_to_rd_i <= 'h040;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_256[9]) begin
+                        qwords_to_rd_i <= 'h020;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                    else if (!aux_diff_128[9]) begin
+                        qwords_to_rd_i <= 'h010;
+                        read_chunk <= 1'b1;
+                        trigger_rd_tlp_fsm <= s5;
+                    end
+                end
+
+                s5 : begin
+                    look_ahead_next_wr_addr <= next_wr_addr + qwords_to_rd_i;
+                    look_ahead_huge_page_addr_read_from <= huge_page_addr_read_from + {qwords_to_rd_i, 3'b0};
+                    look_ahead_huge_page_qwords_counter <= huge_page_qwords_counter + qwords_to_rd_i;
+
+                    tlp_tag_sent <= tlp_tag;
+                    if (read_chunk_ack) begin
+                        read_chunk <= 1'b0;
+                        trigger_rd_tlp_fsm <= s6;
+                    end
+                end
+
+                s6 : begin
                     next_wr_addr <= look_ahead_next_wr_addr;
                     huge_page_addr_read_from <= look_ahead_huge_page_addr_read_from;
                     huge_page_qwords_counter <= look_ahead_huge_page_qwords_counter;
@@ -389,23 +386,23 @@ module tx_wr_pkt_to_bram (
                     else begin
                         tag_to_hp[tlp_tag_sent] <= hp2;
                     end
-                    trigger_rd_tlp_fsm <= s5;
+                    trigger_rd_tlp_fsm <= s7;
                 end
 
-                s5 : begin
+                s7 : begin
                     if (huge_page_qwords_counter < current_huge_page_qwords) begin
                         trigger_rd_tlp_fsm <= s1;
                     end
                     else begin
                         return_huge_page_to_host <= 1'b1;
-                        send_huge_page_rd_completed <= 1'b1;
-                        trigger_rd_tlp_fsm <= s6;
+                        send_rd_completed <= 1'b1;
+                        trigger_rd_tlp_fsm <= s8;
                     end
                 end
 
-                s6 : begin
-                    if (send_huge_page_rd_completed_ack) begin
-                        send_huge_page_rd_completed <= 1'b0;
+                s8 : begin
+                    if (send_rd_completed_ack) begin
+                        send_rd_completed <= 1'b0;
                         trigger_rd_tlp_fsm <= s0;
                     end
                 end
@@ -446,6 +443,9 @@ module tx_wr_pkt_to_bram (
 
                 s2 : begin                                     // added delay to send the interrupt after the notification
                     trigger_interrupts_fsm <= s3;
+                    if (!interrupts_enabled) begin
+                        trigger_interrupts_fsm <= s0;
+                    end
                 end
 
                 s3 : begin
@@ -659,60 +659,6 @@ module tx_wr_pkt_to_bram (
 
 
     ////////////////////////////////////////////////
-    // pulse generation for 156.25 MHz domain   must be active for 3 clks in 250 MHz domain
-    ////////////////////////////////////////////////
-    always @( posedge trn_clk or negedge reset_n ) begin
-        
-        if (!reset_n ) begin  // reset
-            commited_wr_addr <= 'b0;
-            commited_wr_addr_change <= 1'b0;
-            commited_wr_addr_aux1 <= 'b0;
-            pulse_gen_fsm1 <= s0;
-        end
-        else begin  // not reset
-
-            case (pulse_gen_fsm1)
-                
-                s0 : begin
-                    if (commited_wr_addr_internal != commited_wr_addr_aux1) begin
-                        commited_wr_addr_aux0 <= commited_wr_addr_internal;
-                        pulse_gen_fsm1 <= s1;
-                    end
-                    wait_gap <= 'h1;
-                end
-
-                s1 : begin
-                    commited_wr_addr <= commited_wr_addr_aux0;
-                    commited_wr_addr_aux1 <= commited_wr_addr_aux0;
-                    pulse_gen_fsm1 <= s2;
-                end
-
-                s2 : begin
-                    commited_wr_addr_change <= 1'b1;
-                    pulse_gen_fsm1 <= s3;
-                end
-
-                s3 : pulse_gen_fsm1 <= s4;
-                s4 : pulse_gen_fsm1 <= s5;
-
-                s5 : begin
-                    commited_wr_addr_change <= 1'b0;
-                    wait_gap <= wait_gap +1;
-                    if (!wait_gap) begin
-                        pulse_gen_fsm1 <= s0;
-                    end
-                end
-
-                default : begin
-                    pulse_gen_fsm1 <= s0;
-                end
-            endcase
-
-        end     // not reset
-    end  //always
-
-
-    ////////////////////////////////////////////////
     // completion_tlp & write to bram (wr_to_bram_fsm)
     ////////////////////////////////////////////////
     always @( posedge trn_clk or negedge reset_n ) begin
@@ -722,7 +668,7 @@ module tx_wr_pkt_to_bram (
             look_ahead_wr_addr <= 'b0;
             wr_en <= 1'b1;
             completion_received <= 1'b0;
-            commited_wr_addr_internal <= 'b0;
+            commited_wr_addr <= 'b0;
             this_tlp_tag <= 'b0;
             wr_to_bram_fsm <= s0;
         end
@@ -737,7 +683,7 @@ module tx_wr_pkt_to_bram (
 
                 s0 : begin
                     qwords_on_tlp <= trn_rd[41:33];
-                    commited_wr_addr_internal <= look_ahead_wr_addr;
+                    commited_wr_addr <= look_ahead_wr_addr;
                     if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n)) begin
                         if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] == `SC) ) begin
                             wr_to_bram_fsm <= s1;
@@ -774,3 +720,6 @@ module tx_wr_pkt_to_bram (
     end  //always
 
 endmodule // tx_wr_pkt_to_bram
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////

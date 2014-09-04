@@ -1,6 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
 `timescale 1ns / 1ps
+//`default_nettype none
 `include "includes.v"
 
 module rx_mac_interface (
@@ -21,8 +22,7 @@ module rx_mac_interface (
     
     // Internal logic
     output reg    [`BF:0]     commited_wr_address,
-    input                     rd_addr_updated,               //250 MHz domain driven
-    input         [`BF:0]     commited_rd_address              //250 MHz domain driven
+    input         [`BF:0]     commited_rd_address
 
     );
 
@@ -31,12 +31,17 @@ module rx_mac_interface (
     localparam s1 = 8'b00000001;
     localparam s2 = 8'b00000010;
     localparam s3 = 8'b00000100;
+    localparam s4 = 8'b00001000;
+    localparam s5 = 8'b00010000;
+    localparam s6 = 8'b00100000;
+    localparam s7 = 8'b01000000;
+    localparam s8 = 8'b10000000;
 
     //-------------------------------------------------------
     // Local ethernet frame reception and memory write
     //-------------------------------------------------------
-    reg     [7:0]     state;
-    reg     [31:0]    byte_counter;
+    reg     [7:0]     rx_fsm;
+    reg     [15:0]    byte_counter;
     reg     [`BF:0]   aux_wr_addr;
     reg     [`BF:0]   diff;
     (* KEEP = "TRUE" *)reg     [31:0]   dropped_frames_counter;
@@ -51,14 +56,6 @@ module rx_mac_interface (
     reg     [31:0]   ts_sec;
     reg     [31:0]   ts_nsec;
     reg     [27:0]   free_running;
-
-    //-------------------------------------------------------
-    // Local 250 MHz signal synch
-    //-------------------------------------------------------
-    reg              rd_addr_updated_reg0;
-    reg              rd_addr_updated_reg1;
-    reg     [`BF:0]  commited_rd_address_reg0;
-    reg     [`BF:0]  commited_rd_address_reg1;
 
     ////////////////////////////////////////////////
     // ts_sec-and-ts_nsec-generation
@@ -84,62 +81,35 @@ module rx_mac_interface (
     end  //always
 
     ////////////////////////////////////////////////
-    // 250 MHz signal synch
-    ////////////////////////////////////////////////
-    always @( posedge clk or negedge reset_n ) begin
-
-        if (!reset_n ) begin  // reset
-            rd_addr_updated_reg0 <= 1'b0;
-            rd_addr_updated_reg1 <= 1'b0;
-            commited_rd_address_reg0 <= 'b0;
-            commited_rd_address_reg1 <= 'b0;
-        end
-        
-        else begin  // not reset
-            rd_addr_updated_reg0 <= rd_addr_updated;
-            rd_addr_updated_reg1 <= rd_addr_updated_reg0;
-
-            commited_rd_address_reg0 <= commited_rd_address;
-
-            if (rd_addr_updated_reg1) begin                                      // transitory off
-                commited_rd_address_reg1 <= commited_rd_address_reg0;
-            end
-
-        end     // not reset
-    end  //always
-
-    ////////////////////////////////////////////////
     // ethernet frame reception and memory write
     ////////////////////////////////////////////////
     always @( posedge clk or negedge reset_n ) begin
 
         if (!reset_n ) begin  // reset
             commited_wr_address <= 'b0;
-            diff <= 'b0;
-            dropped_frames_counter <= 32'b0;
-            wr_en <= 1'b0;
-            state <= s0;
+            dropped_frames_counter <= 'b0;
+            wr_en <= 1'b1;
+            rx_fsm <= s0;
         end
         
         else begin  // not reset
             
-            diff <= aux_wr_addr + (~commited_rd_address_reg1) +1;
+            diff <= aux_wr_addr + (~commited_rd_address) +1;
+            wr_en <= 1'b1;
             
-            case (state)
+            case (rx_fsm)
 
                 s0 : begin                                  // configure mac core to present preamble and save the packet timestamp while its reception
-                    byte_counter <= 32'b0;
+                    byte_counter <= 'b0;
                     aux_wr_addr <= commited_wr_address +1;
-                    wr_en <= 1'b0;
-                    if (rx_data_valid != 8'b0) begin      // wait for sof (preamble)
-                        state <= s1;
+                    if (rx_data_valid) begin      // wait for sof (preamble)
+                        rx_fsm <= s1;
                     end
                 end
 
                 s1 : begin
                     wr_data <= rx_data;
                     wr_addr <= aux_wr_addr;
-                    wr_en <= 1'b1;
                     aux_wr_addr <= aux_wr_addr +1;
 
                     rx_data_valid_reg <= rx_data_valid;
@@ -150,7 +120,6 @@ module rx_mac_interface (
                         8'b00000000 : begin
                             byte_counter <= byte_counter;       // don't increment
                             aux_wr_addr <= aux_wr_addr;
-                            wr_en <= 1'b0;
                         end
                         8'b00000001 : begin
                             byte_counter <= byte_counter + 1;
@@ -178,43 +147,42 @@ module rx_mac_interface (
                         end
                     endcase
 
-                    if (diff[`BF:0] > `MAX_DIFF) begin         // buffer is more than 90%
-                        state <= s3;
+                    if (diff > `MAX_DIFF) begin         // buffer is more than 90%
+                        rx_fsm <= s3;
                     end
                     else if (rx_good_frame) begin        // eof (good frame)
-                        state <= s2;
+                        rx_fsm <= s2;
                     end
                     else if (rx_bad_frame) begin
-                        state <= s0;
+                        rx_fsm <= s0;
                     end
                 end
 
                 s2 : begin
                     wr_data <= {byte_counter, 32'b0};
                     wr_addr <= commited_wr_address;
-                    wr_en <= 1'b1;
 
                     commited_wr_address <= aux_wr_addr;                      // commit the packet
                     aux_wr_addr <= aux_wr_addr +1;
                     byte_counter <= 32'b0;
 
-                    if (rx_data_valid != 8'b0) begin        // sof (preamble)
-                        state <= s1;
+                    if (rx_data_valid) begin        // sof (preamble)
+                        rx_fsm <= s1;
                     end
                     else begin
-                        state <= s0;
+                        rx_fsm <= s0;
                     end
                 end
                 
                 s3 : begin                                  // drop current frame
                     if (rx_good_frame || rx_good_frame_reg || rx_bad_frame  || rx_bad_frame_reg) begin
                         dropped_frames_counter <= dropped_frames_counter +1; 
-                        state <= s0;
+                        rx_fsm <= s0;
                     end
                 end
 
                 default : begin 
-                    state <= s0;
+                    rx_fsm <= s0;
                 end
 
             endcase

@@ -1,6 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
-
+`timescale 1ns / 1ps
+//`default_nettype none
 `include "includes.v"
 
 `define TX_MEM_WR64_FMT_TYPE 7'b11_00000
@@ -32,8 +33,8 @@ module tx_rd_host_mem (
     output reg  [3:0]      tlp_tag,
     input       [8:0]      qwords_to_rd,
     output reg             read_chunk_ack,
-    input                  send_huge_page_rd_completed,
-    output reg             send_huge_page_rd_completed_ack,
+    input                  send_rd_completed,
+    output reg             send_rd_completed_ack,
 
     input                  notify,
     input       [63:0]     notification_message,
@@ -72,7 +73,7 @@ module tx_rd_host_mem (
     //-------------------------------------------------------
     // Local send_tlps_machine
     //-------------------------------------------------------   
-    reg     [14:0]  state;
+    reg     [14:0]  rd_host_fsm;
     reg     [63:0]  host_mem_addr;
     reg     [63:0]  next_completed_buffer_address;
     reg     [63:0]  last_completed_buffer_address;
@@ -98,24 +99,24 @@ module tx_rd_host_mem (
             cfg_interrupt_n <= 1'b1;
 
             read_chunk_ack <= 1'b0;
-            send_huge_page_rd_completed_ack <= 1'b0;
+            send_rd_completed_ack <= 1'b0;
             huge_page_index <= 'b0;
             send_interrupt_ack <= 1'b0;
             notify_ack <= 1'b0;
             next_tlp_tag <= 'b0;
 
             driving_interface <= 1'b0;
-            state <= s0;
+            rd_host_fsm <= s0;
         end
         
         else begin  // not reset
 
             read_chunk_ack <= 1'b0;
-            send_huge_page_rd_completed_ack <= 1'b0;
+            send_rd_completed_ack <= 1'b0;
             send_interrupt_ack <= 1'b0;
             notify_ack <= 1'b0;
 
-            case (state)
+            case (rd_host_fsm)
 
                 s0 : begin
                     next_completed_buffer_address <= completed_buffer_address + {huge_page_index, 2'b00};
@@ -129,23 +130,23 @@ module tx_rd_host_mem (
                             if (read_chunk) begin
                                 driving_interface <= 1'b1;
                                 read_chunk_ack <= 1'b1;
-                                state <= s1;
+                                rd_host_fsm <= s1;
                             end
-                            else if (send_huge_page_rd_completed) begin
+                            else if (send_rd_completed) begin
                                 driving_interface <= 1'b1;
-                                send_huge_page_rd_completed_ack <= 1'b1;
-                                state <= s4;
+                                send_rd_completed_ack <= 1'b1;
+                                rd_host_fsm <= s4;
                             end
                             else if (notify) begin
                                 driving_interface <= 1'b1;
                                 notify_ack <= 1'b1;
-                                state <= s9;
+                                rd_host_fsm <= s9;
                             end
                             else if (send_interrupt) begin
                                 cfg_interrupt_n <= 1'b0;
                                 driving_interface <= 1'b1;
                                 send_interrupt_ack <= 1'b1;
-                                state <= s8;
+                                rd_host_fsm <= s8;
                             end
                         end
                     end
@@ -174,7 +175,7 @@ module tx_rd_host_mem (
                     trn_tsof_n <= 1'b0;
                     trn_tsrc_rdy_n <= 1'b0;
                     
-                    state <= s2;
+                    rd_host_fsm <= s2;
                 end
 
                 s2 : begin
@@ -183,7 +184,7 @@ module tx_rd_host_mem (
                         trn_tsof_n <= 1'b1;
                         trn_teof_n <= 1'b0;
                         trn_td <= host_mem_addr;
-                        state <= s3;
+                        rd_host_fsm <= s3;
                     end
                 end
 
@@ -194,7 +195,7 @@ module tx_rd_host_mem (
                         trn_trem_n <= 8'hFF;
                         trn_td <= 64'b0;
                         driving_interface <= 1'b0;
-                        state <= s0;
+                        rd_host_fsm <= s0;
                     end
                 end
 
@@ -221,7 +222,7 @@ module tx_rd_host_mem (
                     trn_tsof_n <= 1'b0;
                     trn_tsrc_rdy_n <= 1'b0;
                     
-                    state <= s5;
+                    rd_host_fsm <= s5;
                 end
 
                 s5 : begin
@@ -229,7 +230,7 @@ module tx_rd_host_mem (
                     if (!trn_tdst_rdy_n) begin
                         trn_tsof_n <= 1'b1;
                         trn_td <= next_completed_buffer_address;
-                        state <= s6;
+                        rd_host_fsm <= s6;
                     end
                 end
 
@@ -239,7 +240,7 @@ module tx_rd_host_mem (
                         trn_td <= 64'hEFBECACA00000000;
                         trn_trem_n <= 8'h0F;
                         trn_teof_n <= 1'b0;
-                        state <= s7;
+                        rd_host_fsm <= s7;
                     end
                 end
 
@@ -250,7 +251,7 @@ module tx_rd_host_mem (
                         trn_trem_n <= 8'hFF;
                         trn_td <= 64'b0;
                         driving_interface <= 1'b0;
-                        state <= s0;
+                        rd_host_fsm <= s0;
                     end
                 end
 
@@ -258,7 +259,7 @@ module tx_rd_host_mem (
                     if (!cfg_interrupt_rdy_n) begin
                         cfg_interrupt_n <= 1'b1;
                         driving_interface <= 1'b0;
-                        state <= s0;
+                        rd_host_fsm <= s0;
                     end
                 end
 
@@ -285,14 +286,14 @@ module tx_rd_host_mem (
                     trn_tsof_n <= 1'b0;
                     trn_tsrc_rdy_n <= 1'b0;
                     
-                    state <= s10;
+                    rd_host_fsm <= s10;
                 end
 
                 s10 : begin
                     if (!trn_tdst_rdy_n) begin
                         trn_tsof_n <= 1'b1;
                         trn_td <= last_completed_buffer_address;
-                        state <= s11;
+                        rd_host_fsm <= s11;
                     end
                 end
 
@@ -302,12 +303,12 @@ module tx_rd_host_mem (
                         trn_td <= {notification_message_reg[7:0], notification_message_reg[15:8], notification_message_reg[23:16], notification_message_reg[31:24], notification_message_reg[39:32], notification_message_reg[47:40], notification_message_reg[55:48], notification_message_reg[63:56]};
                         trn_trem_n <= 8'h00;
                         trn_teof_n <= 1'b0;
-                        state <= s7;
+                        rd_host_fsm <= s7;
                     end
                 end
 
                 default : begin 
-                    state <= s0;
+                    rd_host_fsm <= s0;
                 end
 
             endcase

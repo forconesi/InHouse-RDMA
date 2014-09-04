@@ -1,6 +1,7 @@
-
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
+`timescale 1ns / 1ps
+//`default_nettype none
 
 `define PIO_64_RX_MEM_RD32_FMT_TYPE 7'b00_00000
 `define RX_MEM_WR32_FMT_TYPE 7'b10_00000
@@ -121,7 +122,7 @@ module mdio_host_interface (
                 // see ug148
 
                 s1 : begin                                  // Receiver Configuration Word 1
-                    host_opcode[1] <= 1'b0x;
+                    host_opcode[1] <= 1'b0;
                     host_miim_sel <= 1'b0;
                     host_addr <= 10'h240;
                     host_wr_data[15:0] <= 16'b0;            // Pause frame MAC address
@@ -145,7 +146,7 @@ module mdio_host_interface (
                 end
 
                 s3 : begin                                  // Transmitter Configuration
-                    host_opcode[1] <= 1'b0x;
+                    host_opcode[1] <= 1'b0;
                     host_miim_sel <= 1'b0;
                     host_addr <= 10'h280;
                     host_wr_data[23] <= 1'b0;               // Transmitter Preserve Preamble Enable
@@ -333,3 +334,6 @@ module mdio_host_interface (
    
 
 endmodule // mdio_host_interface
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////

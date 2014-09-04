@@ -1,5 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
+`timescale 1ns / 1ps
+//`default_nettype none
 `include "includes.v"
 
 module tx_mac_interface (
@@ -15,15 +17,13 @@ module tx_mac_interface (
     input                     tx_ack,
 
     // Internal memory driver
-    output reg    [`BF:0]     rd_addr,
+    output        [8:0]       rd_addr,
     input         [63:0]      rd_data,
     
     
     // Internal logic
-    output reg    [`BF:0]     commited_rd_addr,
-    output reg                commited_rd_addr_change,
-    input                     commited_wr_addr_change,                         //250 MHz domain driven
-    input         [`BF:0]     commited_wr_addr                //250 MHz domain driven
+    output reg    [9:0]       commited_rd_addr,
+    input         [9:0]       commited_wr_addr
 
     );
 
@@ -35,14 +35,8 @@ module tx_mac_interface (
     localparam s4 = 8'b00001000;
     localparam s5 = 8'b00010000;
     localparam s6 = 8'b00100000;
-
-    //-------------------------------------------------------
-    // Local 250 MHz signal synch
-    //-------------------------------------------------------
-    reg              commited_wr_addr_change_reg0;
-    reg              commited_wr_addr_change_reg1;
-    reg     [`BF:0]  commited_wr_addr_reg0;
-    reg     [`BF:0]  commited_wr_addr_reg1;
+    localparam s7 = 8'b01000000;
+    localparam s8 = 8'b10000000;
 
     //-------------------------------------------------------
     // Local trigger_eth_frame
@@ -50,7 +44,8 @@ module tx_mac_interface (
     reg     [7:0]     trigger_frame_fsm;
     reg     [31:0]    byte_counter;
     reg     [9:0]     qwords_in_eth;
-    reg     [`BF:0]   diff;
+    reg     [9:0]     diff;
+    reg     [9:0]     rd_addr_i;
     reg               trigger_tx_frame;
     reg     [7:0]     last_tx_data_valid;
     reg               take_your_chances;
@@ -61,9 +56,9 @@ module tx_mac_interface (
     reg     [7:0]     tx_frame_fsm;
     reg     [9:0]     qwords_sent;
     reg               synch;
-    reg     [`BF:0]   next_rd_addr;
-    reg     [`BF:0]   rd_addr_sof;
-    reg     [`BF:0]   rd_addr_prev0;
+    reg     [9:0]     next_rd_addr;
+    reg     [9:0]     rd_addr_sof;
+    reg     [9:0]     rd_addr_prev0;
     reg     [63:0]    rd_data_aux;
     reg               end_of_eth_frame;
     ////////////////////////////////////////////////
@@ -76,35 +71,7 @@ module tx_mac_interface (
     // INSTRUMENTATION
     ////////////////////////////////////////////////
 
-    //-------------------------------------------------------
-    // Local signal_carefully
-    //-------------------------------------------------------
-    reg     [7:0]     signal_carefully_fsm;
-
-    ////////////////////////////////////////////////
-    // 250 MHz signal synch
-    ////////////////////////////////////////////////
-    always @( posedge clk or negedge reset_n ) begin
-
-        if (!reset_n ) begin  // reset
-            commited_wr_addr_change_reg0 <= 1'b0;
-            commited_wr_addr_change_reg1 <= 1'b0;
-            commited_wr_addr_reg0 <= 'b0;
-            commited_wr_addr_reg1 <= 'b0;
-        end
-        
-        else begin  // not reset
-            commited_wr_addr_change_reg0 <= commited_wr_addr_change;
-            commited_wr_addr_change_reg1 <= commited_wr_addr_change_reg0;
-
-            commited_wr_addr_reg0 <= commited_wr_addr;
-
-            if (commited_wr_addr_change_reg1) begin                                      // transitory off
-                commited_wr_addr_reg1 <= commited_wr_addr_reg0;
-            end
-
-        end     // not reset
-    end  //always
+    assign rd_addr = rd_addr_i;
 
     ////////////////////////////////////////////////
     // trigger_eth_frame
@@ -125,7 +92,7 @@ module tx_mac_interface (
                 take_your_chances <= 1'b1;
             end
             
-            diff <= commited_wr_addr_reg1 + (~rd_addr) +1;
+            diff <= commited_wr_addr + (~rd_addr_i) +1;
             
             case (trigger_frame_fsm)
 
@@ -202,12 +169,13 @@ module tx_mac_interface (
 
         if (!reset_n ) begin  // reset
             tx_underrun <= 1'b0;
-            rd_addr <= 'b0;
+            rd_addr_i <= 'b0;
             tx_start <= 1'b0;
             tx_data_valid <= 'b0;
             tx_data <= 'b0;
             synch <= 1'b0;
             end_of_eth_frame <= 1'b0;
+            commited_rd_addr <= 'b0;
             `ifdef INSTRUMENTATION
             frames_sent <= 'b0;
             `endif
@@ -220,7 +188,7 @@ module tx_mac_interface (
             tx_underrun <= 1'b0;
             tx_start <= 1'b0;
             tx_data_valid <= 'b0;
-            rd_addr_prev0 <= rd_addr;
+            rd_addr_prev0 <= rd_addr_i;
             end_of_eth_frame <= 1'b0;
 
 ////////////////////////////////////////////////
@@ -238,16 +206,17 @@ module tx_mac_interface (
             case (tx_frame_fsm)
 
                 s0: begin
-                    next_rd_addr <= rd_addr +1;
+                    next_rd_addr <= rd_addr_i +1;
+                    commited_rd_addr <= rd_addr_i;
                     if (trigger_tx_frame) begin
-                        rd_addr <= next_rd_addr;
+                        rd_addr_i <= next_rd_addr;
                         tx_frame_fsm <= s1;
                     end
                 end
 
                 s1 : begin
                     rd_addr_sof <= rd_addr_prev0;
-                    rd_addr <= rd_addr +1;
+                    rd_addr_i <= rd_addr_i +1;
                     tx_start <= 1'b1;
                     tx_frame_fsm <= s2;
                 end
@@ -255,13 +224,13 @@ module tx_mac_interface (
                 s2 : begin
                     tx_data <= rd_data;
                     tx_data_valid <= 'hFF;
-                    rd_addr <= rd_addr +1;
+                    rd_addr_i <= rd_addr_i +1;
                     tx_frame_fsm <= s3;
                 end
 
                 s3 : begin
                     tx_data_valid <= 'hFF;
-                    next_rd_addr <= rd_addr +1;
+                    next_rd_addr <= rd_addr_i +1;
                     rd_data_aux <= rd_data;
                     tx_frame_fsm <= s4;
                 end
@@ -271,14 +240,14 @@ module tx_mac_interface (
                     qwords_sent <= 'h003;
                     if (tx_ack) begin
                         tx_data <= rd_data_aux;
-                        rd_addr <= next_rd_addr;
+                        rd_addr_i <= next_rd_addr;
                         tx_frame_fsm <= s5;
                     end
                 end
 
                 s5 : begin
                     tx_data <= rd_data;
-                    rd_addr <= rd_addr +1;
+                    rd_addr_i <= rd_addr_i +1;
                     tx_data_valid <= 'hFF;
                     qwords_sent <= qwords_sent +1;
                     if (qwords_in_eth == qwords_sent) begin
@@ -286,7 +255,7 @@ module tx_mac_interface (
                         end_of_eth_frame <= 1'b1;
                         tx_data_valid <= last_tx_data_valid;
                         //if (!take_your_chances) begin           // the normal case
-                            rd_addr <= rd_addr;
+                            rd_addr_i <= rd_addr_i;
                             tx_frame_fsm <= s0;
                         //end
                         //else begin
@@ -295,7 +264,7 @@ module tx_mac_interface (
                     end
                     //else if (diff == 'h1) begin
                         //tx_underrun <= 1'b1;
-                        //rd_addr <= rd_addr_sof;
+                        //rd_addr_i <= rd_addr_sof;
                         //tx_frame_fsm <= s6;
                     //end
                 end
@@ -307,43 +276,6 @@ module tx_mac_interface (
 
                 default : begin 
                     tx_frame_fsm <= s0;
-                end
-
-            endcase
-
-        end     // not reset
-    end  //always
-
-    ////////////////////////////////////////////////
-    // signal_carefully
-    ////////////////////////////////////////////////
-    always @( posedge clk or negedge reset_n ) begin
-
-        if (!reset_n ) begin  // reset
-            commited_rd_addr_change <= 1'b0;
-            commited_rd_addr <= 'b0;
-            signal_carefully_fsm <= s0;
-        end
-        
-        else begin  // not reset
-
-            case (signal_carefully_fsm)
-
-                s0: begin
-                    commited_rd_addr_change <= 1'b0;
-                    if (end_of_eth_frame) begin
-                        commited_rd_addr <= rd_addr_prev0;
-                        signal_carefully_fsm <= s1;
-                    end
-                end
-
-                s1 : begin
-                    commited_rd_addr_change <= 1'b1;
-                    signal_carefully_fsm <= s0;
-                end
-
-                default : begin 
-                    signal_carefully_fsm <= s0;
                 end
 
             endcase

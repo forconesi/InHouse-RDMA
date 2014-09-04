@@ -1,6 +1,7 @@
-
 //////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
+`timescale 1ns / 1ps
+//`default_nettype none
 
 `define PIO_64_RX_MEM_RD32_FMT_TYPE 7'b00_00000
 `define RX_MEM_WR32_FMT_TYPE 7'b10_00000
@@ -42,6 +43,7 @@ module rx_huge_pages_addr (
     reg     [7:0]   state;
     reg             huge_page_unlock_1;
     reg             huge_page_unlock_2;
+    reg     [31:0]  aux_dw;
 
     ////////////////////////////////////////////////
     // huge_page_status
@@ -88,22 +90,15 @@ module rx_huge_pages_addr (
                 end
 
                 s1 : begin
+                    aux_dw <= trn_rd[31:0];
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
                         case (trn_rd[39:34])
 
                             6'b010000 : begin     // huge page address
-                                huge_page_addr_1[7:0] <= trn_rd[31:24];
-                                huge_page_addr_1[15:8] <= trn_rd[23:16];
-                                huge_page_addr_1[23:16] <= trn_rd[15:8];
-                                huge_page_addr_1[31:24] <= trn_rd[7:0];
                                 state <= s2;
                             end
 
                             6'b010010 : begin     // huge page address
-                                huge_page_addr_2[7:0] <= trn_rd[31:24];
-                                huge_page_addr_2[15:8] <= trn_rd[23:16];
-                                huge_page_addr_2[23:16] <= trn_rd[15:8];
-                                huge_page_addr_2[31:24] <= trn_rd[7:0];
                                 state <= s3;
                             end
 
@@ -126,6 +121,11 @@ module rx_huge_pages_addr (
                 end
 
                 s2 : begin
+                    huge_page_addr_1[7:0] <= aux_dw[31:24];
+                    huge_page_addr_1[15:8] <= aux_dw[23:16];
+                    huge_page_addr_1[23:16] <= aux_dw[15:8];
+                    huge_page_addr_1[31:24] <= aux_dw[7:0];
+
                     huge_page_addr_1[39:32] <= trn_rd[63:56];
                     huge_page_addr_1[47:40] <= trn_rd[55:48];
                     huge_page_addr_1[55:48] <= trn_rd[47:40];
@@ -136,6 +136,11 @@ module rx_huge_pages_addr (
                 end
 
                 s3 : begin
+                    huge_page_addr_2[7:0] <= aux_dw[31:24];
+                    huge_page_addr_2[15:8] <= aux_dw[23:16];
+                    huge_page_addr_2[23:16] <= aux_dw[15:8];
+                    huge_page_addr_2[31:24] <= aux_dw[7:0];
+
                     huge_page_addr_2[39:32] <= trn_rd[63:56];
                     huge_page_addr_2[47:40] <= trn_rd[55:48];
                     huge_page_addr_2[55:48] <= trn_rd[47:40];
@@ -155,3 +160,5 @@ module rx_huge_pages_addr (
    
 
 endmodule // rx_huge_pages_addr
+//////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////
