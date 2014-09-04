@@ -1,0 +1,21 @@
+#!/bin/bash
+
+dir=$(dirname "$0")
+. "$dir/vif-common.sh"
+
+bridge=${bridge:-}
+bridge=$(xenstore_read_default "$XENBUS_PATH/bridge" "$bridge")
+
+case "$command" in
+    online)
+	#ip link set $dev up
+	#ip link set $vif mtu 1500
+	xenstore-write "$XENBUS_PATH/feature-nfback" 1
+	xenstore-write "$XENBUS_PATH/hotplug-status" connected
+        ;;
+
+    offline)
+        ;;
+esac
+
+log debug "Successful vif-nf $command for $dev, bridge $bridge."
