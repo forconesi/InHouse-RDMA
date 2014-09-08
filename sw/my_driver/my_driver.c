@@ -42,14 +42,14 @@ void rx_wq_function(struct work_struct *wk) {
     int pkt_counter = 0;
     #endif
 
-    if (my_drv_data->huge_page_index == 1) {    // Proccess Huge Page 1
-        my_drv_data->huge_page_index = 2;
+    if (!my_drv_data->huge_page_index) {    // Proccess Huge Page 1
+        my_drv_data->huge_page_index = 1;
         current_hp = 1;
         pci_dma_sync_single_for_cpu(my_drv_data->pdev, my_drv_data->huge_page1_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
         current_hp_addr = (u32 *)my_drv_data->huge_page_kern_address1;
     }
-    else {//if (my_drv_data->huge_page_index == 2) {                                  // Proccess Huge Page 2
-        my_drv_data->huge_page_index = 1;
+    else {                                  // Proccess Huge Page 2
+        my_drv_data->huge_page_index = 0;
         current_hp = 2;
         pci_dma_sync_single_for_cpu(my_drv_data->pdev, my_drv_data->huge_page2_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
         current_hp_addr = (u32 *)my_drv_data->huge_page_kern_address2;
@@ -66,6 +66,13 @@ void rx_wq_function(struct work_struct *wk) {
     #endif
 
     //DW01 to DW31 (both included) are reserved
+    dw_index = 32;
+
+    int i;
+    for (i=0;i<100;i++) {
+        printk(KERN_INFO "DW: %02d:  %08x\n", i, current_hp_addr[dw_index]);
+        dw_index++;
+    }
     dw_index = 32;
 
     do {
@@ -114,11 +121,11 @@ proccesing_finished:
     // Send Memory Write Request TLPs with huge pages' card-lock-up
     if (current_hp == 1) {     // Return Huge Page 1
         pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page1_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
-        *(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef;
+        *(((u32 *)my_drv_data->bar2) + 24) = 0xcacabeef;
     }
     else {//if (current_hp == 2) {                 // Return Huge Page 2
         pci_dma_sync_single_for_device(my_drv_data->pdev, my_drv_data->huge_page2_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
-        *(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef;
+        *(((u32 *)my_drv_data->bar2) + 25) = 0xcacabeef;
     }
 
     //return;
@@ -129,19 +136,19 @@ irqreturn_t card_interrupt_handler(int irq, void *dev_id) {
     struct my_driver_host_data *my_drv_data = (struct my_driver_host_data *)pci_get_drvdata(pdev);
     int ret;
 
-    //do {
-        //ret = queue_work(my_drv_data->rx_wq, (struct work_struct *)&my_drv_data->rx_work);                            //Process Huge Page on kernel thread
-    //} while (!ret);
+    do {
+        ret = queue_work(my_drv_data->rx_wq, (struct work_struct *)&my_drv_data->rx_work);                            //Process Huge Page on kernel thread
+    } while (!ret);
 
-    // if (!ret) {
-    //     printk(KERN_INFO "busy\n");
-    // }
-/*
+    if (!ret) {
+        printk(KERN_INFO "busy\n");
+    }
+
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: Interruption received\n");
     #endif
-*/
-    printk(KERN_INFO "Myd: Tx interrupt received. huge paged consumed\n");
+
+    //printk(KERN_INFO "Myd: Tx interrupt received. huge paged consumed\n");
 
     return IRQ_HANDLED;
 }
@@ -259,8 +266,10 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     
     my_drv_data->huge_page_kern_address1 = (void *)page_address(my_drv_data->huge_page1);
     my_drv_data->huge_page_kern_address2 = (void *)page_address(my_drv_data->huge_page2);
-    
- 
+
+    my_drv_data->huge_page1_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page1), 2*1024*1024, PCI_DMA_FROMDEVICE);
+    my_drv_data->huge_page2_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page2), 2*1024*1024, PCI_DMA_FROMDEVICE);
+
     #ifdef MY_DEBUG
     memset(my_drv_data->huge_page_kern_address1, 0, 2*1024*1024);
     memset(my_drv_data->huge_page_kern_address2, 0, 2*1024*1024);
@@ -280,171 +289,169 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     // Ready to rx start operation
 
     // Send Memory Write Request TLPs with huge pages' address
-    //*(((u32 *)my_drv_data->bar2) + 2) = my_drv_data->huge_page1_dma_addr;
-    //*(((u32 *)my_drv_data->bar2) + 4) = my_drv_data->huge_page2_dma_addr;
+    *(((u64 *)my_drv_data->bar2) + 8) = my_drv_data->huge_page1_dma_addr;
+    *(((u64 *)my_drv_data->bar2) + 9) = my_drv_data->huge_page2_dma_addr;
 
     // Send Memory Write Request TLPs with huge pages' card-lock-up
-    //*(((u32 *)my_drv_data->bar2) + 6) = 0xcacabeef;
-    //*(((u32 *)my_drv_data->bar2) + 7) = 0xcacabeef;
+    *(((u32 *)my_drv_data->bar2) + 24) = 0xcacabeef;
+    *(((u32 *)my_drv_data->bar2) + 25) = 0xcacabeef;
 
-    my_drv_data->huge_page_index = 1;
+   //  // Test Tx
+   //  //allocate an out-of-band buffer where hw will write when a huge page was read entirely
 
-    // Test Tx
-    //allocate an out-of-band buffer where hw will write when a huge page was read entirely
+   //  // Enable tx interrupts from board
+   //  ssleep(2);
+   //  *(((u32 *)my_drv_data->bar2) + 46) = 0xcacabeef;
 
-    // Enable tx interrupts from board
-    ssleep(2);
-    *(((u32 *)my_drv_data->bar2) + 46) = 0xcacabeef;
+   //  my_drv_data->tx_completion_buffer_kern_address = pci_alloc_consistent(pdev, 2*4, &my_drv_data->tx_completion_buffer_dma_addr);    // number of huge pages by 1dw/huge page
+   //  printk(KERN_INFO "Myd: tx_completion_buffer_dma_addr dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->tx_completion_buffer_dma_addr >> 32), (int)(u64)my_drv_data->tx_completion_buffer_dma_addr);
+   //  *(((u64 *)my_drv_data->bar2) + 22) = (u64)my_drv_data->tx_completion_buffer_dma_addr;
+   //  // I will use the page 1 for the experiment
+   //  u32 *huge_page_address;
+   //  huge_page_address = (u32 *)my_drv_data->huge_page_kern_address1;
 
-    my_drv_data->tx_completion_buffer_kern_address = pci_alloc_consistent(pdev, 2*4, &my_drv_data->tx_completion_buffer_dma_addr);    // number of huge pages by 1dw/huge page
-    printk(KERN_INFO "Myd: tx_completion_buffer_dma_addr dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->tx_completion_buffer_dma_addr >> 32), (int)(u64)my_drv_data->tx_completion_buffer_dma_addr);
-    *(((u64 *)my_drv_data->bar2) + 22) = (u64)my_drv_data->tx_completion_buffer_dma_addr;
-    // I will use the page 1 for the experiment
-    u32 *huge_page_address;
-    huge_page_address = (u32 *)my_drv_data->huge_page_kern_address1;
+   //  // Packet 1 start 
+   //  huge_page_address[0] = 0;   //first dw reserved
+   //  huge_page_address[1] = 0x00000042;    //length
+   //  huge_page_address[2] = 0xe04a1e00;//payload
+   //  huge_page_address[3] = 0x78100052;
+   //  huge_page_address[4] = 0xfb2bebd2;
+   //  huge_page_address[5] = 0x00450008;
+   //  huge_page_address[6] = 0xd2653400;
+   //  huge_page_address[7] = 0x06400040;
+   //  huge_page_address[8] = 0xf4963c33;
+   //  huge_page_address[9] = 0x389d7439;
+   //  huge_page_address[10] = 0xeb9b1534;
+   //  huge_page_address[11] = 0xdf64bb01;
+   //  huge_page_address[12] = 0x89b10321;
+   //  huge_page_address[13] = 0x1080b71a;
+   //  huge_page_address[14] = 0x0fc9f501;
+   //  huge_page_address[15] = 0x01010000;
+   //  huge_page_address[16] = 0xfa020a08;
+   //  huge_page_address[17] = 0xcc303b43;
+   //  huge_page_address[18] = 0xffff37a3;
+   //  huge_page_address[19] = 0xcacacaca;//payload finishes in even number of dwords 
+   //  // Packet 2 start
+   //  /*
+   //  as displayed in wireshark 74 bytes long
+   //  000ffeca a5e5001e  4ae05200 08004500
+   //  003c33fa 40002e06  7173d05d 07bc96f4
+   //  3841d53c 2df8b249  79f10000 0000a002
+   //  05b45312 00000204  05b40402 080a7c6c
+   //  9c0e0000 00000103  0307
+   //  */
+   //  huge_page_address[20] = 0;   //first dw reserved
+   //  huge_page_address[21] = 0x0000004A;    //length
+   //  huge_page_address[22] = cpu_to_be32(0x000ffeca);//payload
+   //  huge_page_address[23] = cpu_to_be32(0xa5e5001e);
+   //  huge_page_address[24] = cpu_to_be32(0x4ae05200);
+   //  huge_page_address[25] = cpu_to_be32(0x08004500);
+   //  huge_page_address[26] = cpu_to_be32(0x003c33fa);
+   //  huge_page_address[27] = cpu_to_be32(0x40002e06);
+   //  huge_page_address[28] = cpu_to_be32(0x7173d05d);
+   //  huge_page_address[29] = cpu_to_be32(0x07bc96f4);
+   //  huge_page_address[30] = cpu_to_be32(0x3841d53c);
+   //  huge_page_address[31] = cpu_to_be32(0x2df8b249);
+   //  huge_page_address[32] = cpu_to_be32(0x79f10000);
+   //  huge_page_address[33] = cpu_to_be32(0x0000a002);
+   //  huge_page_address[34] = cpu_to_be32(0x05b45312);
+   //  huge_page_address[35] = cpu_to_be32(0x00000204);
+   //  huge_page_address[36] = cpu_to_be32(0x05b40402);
+   //  huge_page_address[37] = cpu_to_be32(0x080a7c6c);
+   //  huge_page_address[38] = cpu_to_be32(0x9c0e0000);
+   //  huge_page_address[39] = cpu_to_be32(0x00000103);
+   //  huge_page_address[40] = 0xcaca0703;
+   //  huge_page_address[41] = 0xbeefbeef;//payload finishes in even number of dwords 
 
-    // Packet 1 start 
-    huge_page_address[0] = 0;   //first dw reserved
-    huge_page_address[1] = 0x00000042;    //length
-    huge_page_address[2] = 0xe04a1e00;//payload
-    huge_page_address[3] = 0x78100052;
-    huge_page_address[4] = 0xfb2bebd2;
-    huge_page_address[5] = 0x00450008;
-    huge_page_address[6] = 0xd2653400;
-    huge_page_address[7] = 0x06400040;
-    huge_page_address[8] = 0xf4963c33;
-    huge_page_address[9] = 0x389d7439;
-    huge_page_address[10] = 0xeb9b1534;
-    huge_page_address[11] = 0xdf64bb01;
-    huge_page_address[12] = 0x89b10321;
-    huge_page_address[13] = 0x1080b71a;
-    huge_page_address[14] = 0x0fc9f501;
-    huge_page_address[15] = 0x01010000;
-    huge_page_address[16] = 0xfa020a08;
-    huge_page_address[17] = 0xcc303b43;
-    huge_page_address[18] = 0xffff37a3;
-    huge_page_address[19] = 0xcacacaca;//payload finishes in even number of dwords 
-    // Packet 2 start
-    /*
-    as displayed in wireshark 74 bytes long
-    000ffeca a5e5001e  4ae05200 08004500
-    003c33fa 40002e06  7173d05d 07bc96f4
-    3841d53c 2df8b249  79f10000 0000a002
-    05b45312 00000204  05b40402 080a7c6c
-    9c0e0000 00000103  0307
-    */
-    huge_page_address[20] = 0;   //first dw reserved
-    huge_page_address[21] = 0x0000004A;    //length
-    huge_page_address[22] = cpu_to_be32(0x000ffeca);//payload
-    huge_page_address[23] = cpu_to_be32(0xa5e5001e);
-    huge_page_address[24] = cpu_to_be32(0x4ae05200);
-    huge_page_address[25] = cpu_to_be32(0x08004500);
-    huge_page_address[26] = cpu_to_be32(0x003c33fa);
-    huge_page_address[27] = cpu_to_be32(0x40002e06);
-    huge_page_address[28] = cpu_to_be32(0x7173d05d);
-    huge_page_address[29] = cpu_to_be32(0x07bc96f4);
-    huge_page_address[30] = cpu_to_be32(0x3841d53c);
-    huge_page_address[31] = cpu_to_be32(0x2df8b249);
-    huge_page_address[32] = cpu_to_be32(0x79f10000);
-    huge_page_address[33] = cpu_to_be32(0x0000a002);
-    huge_page_address[34] = cpu_to_be32(0x05b45312);
-    huge_page_address[35] = cpu_to_be32(0x00000204);
-    huge_page_address[36] = cpu_to_be32(0x05b40402);
-    huge_page_address[37] = cpu_to_be32(0x080a7c6c);
-    huge_page_address[38] = cpu_to_be32(0x9c0e0000);
-    huge_page_address[39] = cpu_to_be32(0x00000103);
-    huge_page_address[40] = 0xcaca0703;
-    huge_page_address[41] = 0xbeefbeef;//payload finishes in even number of dwords 
+   //  my_drv_data->huge_page1_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page1), 2*1024*1024, PCI_DMA_FROMDEVICE);
 
-    my_drv_data->huge_page1_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page1), 2*1024*1024, PCI_DMA_FROMDEVICE);
+   //  // send the address of the filled huge page to the board
+   //  *(((u64 *)my_drv_data->bar2) + 16) = my_drv_data->huge_page1_dma_addr;
+   //  // send to the board the number of qwords written to the huge page
+   //  *(((u32 *)my_drv_data->bar2) + 40) = 21;
 
-    // send the address of the filled huge page to the board
-    *(((u64 *)my_drv_data->bar2) + 16) = my_drv_data->huge_page1_dma_addr;
-    // send to the board the number of qwords written to the huge page
-    *(((u32 *)my_drv_data->bar2) + 40) = 21;
-
-    // Change to another huge page
-    huge_page_address = (u32 *)my_drv_data->huge_page_kern_address2;
-
-/*
-    as displayed in wireshark 159 bytes long
-    ffffffff ffff001a  a0292942 08004500
-    00910000 40004011  6b0896f4 3860ffff
-    ffff445c 445c007d  33247b22 686f7374
-    5f696e74 223a2032  38393834 3732372c
-    20227665 7273696f  6e223a20 5b312c20
-    385d2c20 22646973  706c6179 6e616d65
-    223a2022 32383938  34373237 222c2022
-    706f7274 223a2031  37353030 2c20226e
-    616d6573 70616365  73223a20 5b363533
-    36333938 2c203631  32373135 315d7d   
-*/
-   // Packet 1 start 
-    huge_page_address[0] = 0;   //first dw reserved
-    huge_page_address[1] = 0x0000009F;    //length
-    huge_page_address[2] = cpu_to_be32(0xffffffff); 
-    huge_page_address[3] = cpu_to_be32(0xffff001a); 
-    huge_page_address[4] = cpu_to_be32(0xa0292942); 
-    huge_page_address[5] = cpu_to_be32(0x08004500); 
-    huge_page_address[6] = cpu_to_be32(0x00910000); 
-    huge_page_address[7] = cpu_to_be32(0x40004011); 
-    huge_page_address[8] = cpu_to_be32(0x6b0896f4); 
-    huge_page_address[9] = cpu_to_be32(0x3860ffff); 
-    huge_page_address[10] = cpu_to_be32(0xffff445c); 
-    huge_page_address[11] = cpu_to_be32(0x445c007d); 
-    huge_page_address[12] = cpu_to_be32(0x33247b22); 
-    huge_page_address[13] = cpu_to_be32(0x686f7374); 
-    huge_page_address[14] = cpu_to_be32(0x5f696e74); 
-    huge_page_address[15] = cpu_to_be32(0x223a2032); 
-    huge_page_address[16] = cpu_to_be32(0x38393834); 
-    huge_page_address[17] = cpu_to_be32(0x3732372c); 
-    huge_page_address[18] = cpu_to_be32(0x20227665); 
-    huge_page_address[19] = cpu_to_be32(0x7273696f); 
-    huge_page_address[20] = cpu_to_be32(0x6e223a20); 
-    huge_page_address[21] = cpu_to_be32(0x5b312c20); 
-    huge_page_address[22] = cpu_to_be32(0x385d2c20); 
-    huge_page_address[23] = cpu_to_be32(0x22646973); 
-    huge_page_address[24] = cpu_to_be32(0x706c6179); 
-    huge_page_address[25] = cpu_to_be32(0x6e616d65); 
-    huge_page_address[26] = cpu_to_be32(0x223a2022); 
-    huge_page_address[27] = cpu_to_be32(0x32383938); 
-    huge_page_address[28] = cpu_to_be32(0x34373237); 
-    huge_page_address[29] = cpu_to_be32(0x222c2022); 
-    huge_page_address[30] = cpu_to_be32(0x706f7274); 
-    huge_page_address[31] = cpu_to_be32(0x223a2031); 
-    huge_page_address[32] = cpu_to_be32(0x37353030); 
-    huge_page_address[33] = cpu_to_be32(0x2c20226e); 
-    huge_page_address[34] = cpu_to_be32(0x616d6573); 
-    huge_page_address[35] = cpu_to_be32(0x70616365); 
-    huge_page_address[36] = cpu_to_be32(0x73223a20); 
-    huge_page_address[37] = cpu_to_be32(0x5b363533); 
-    huge_page_address[38] = cpu_to_be32(0x36333938); 
-    huge_page_address[39] = cpu_to_be32(0x2c203631); 
-    huge_page_address[40] = cpu_to_be32(0x32373135); 
-    huge_page_address[41] = cpu_to_be32(0x315d7d00); //payload finishes in even number of dwords 
-
-    my_drv_data->huge_page2_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page2), 2*1024*1024, PCI_DMA_FROMDEVICE);
-
-    // send the address of the filled huge page to the board
-    *(((u64 *)my_drv_data->bar2) + 17) = my_drv_data->huge_page2_dma_addr;
-    // send to the board the number of qwords written to the huge page
-    *(((u32 *)my_drv_data->bar2) + 41) = 21;
+   //  // Change to another huge page
+   //  huge_page_address = (u32 *)my_drv_data->huge_page_kern_address2;
 
 
-    #ifdef MY_DEBUG
-    printk(KERN_INFO "Myd: huge_page1 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page1_dma_addr >> 32), (int)(u64)my_drv_data->huge_page1_dma_addr);
-    printk(KERN_INFO "Myd: huge_page2 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page2_dma_addr >> 32), (int)(u64)my_drv_data->huge_page2_dma_addr);
-    #endif
+   //  as displayed in wireshark 159 bytes long
+   //  ffffffff ffff001a  a0292942 08004500
+   //  00910000 40004011  6b0896f4 3860ffff
+   //  ffff445c 445c007d  33247b22 686f7374
+   //  5f696e74 223a2032  38393834 3732372c
+   //  20227665 7273696f  6e223a20 5b312c20
+   //  385d2c20 22646973  706c6179 6e616d65
+   //  223a2022 32383938  34373237 222c2022
+   //  706f7274 223a2031  37353030 2c20226e
+   //  616d6573 70616365  73223a20 5b363533
+   //  36333938 2c203631  32373135 315d7d   
 
-    // check if huge page 1 is free. In this case we can reuse it or we can pass a new address instead
-    // in this case we reuse it
-    ssleep(5);
-    u32* temp;
-    temp = (u32 *)my_drv_data->tx_completion_buffer_kern_address;
+   // // Packet 1 start 
+   //  huge_page_address[0] = 0;   //first dw reserved
+   //  huge_page_address[1] = 0x0000009F;    //length
+   //  huge_page_address[2] = cpu_to_be32(0xffffffff); 
+   //  huge_page_address[3] = cpu_to_be32(0xffff001a); 
+   //  huge_page_address[4] = cpu_to_be32(0xa0292942); 
+   //  huge_page_address[5] = cpu_to_be32(0x08004500); 
+   //  huge_page_address[6] = cpu_to_be32(0x00910000); 
+   //  huge_page_address[7] = cpu_to_be32(0x40004011); 
+   //  huge_page_address[8] = cpu_to_be32(0x6b0896f4); 
+   //  huge_page_address[9] = cpu_to_be32(0x3860ffff); 
+   //  huge_page_address[10] = cpu_to_be32(0xffff445c); 
+   //  huge_page_address[11] = cpu_to_be32(0x445c007d); 
+   //  huge_page_address[12] = cpu_to_be32(0x33247b22); 
+   //  huge_page_address[13] = cpu_to_be32(0x686f7374); 
+   //  huge_page_address[14] = cpu_to_be32(0x5f696e74); 
+   //  huge_page_address[15] = cpu_to_be32(0x223a2032); 
+   //  huge_page_address[16] = cpu_to_be32(0x38393834); 
+   //  huge_page_address[17] = cpu_to_be32(0x3732372c); 
+   //  huge_page_address[18] = cpu_to_be32(0x20227665); 
+   //  huge_page_address[19] = cpu_to_be32(0x7273696f); 
+   //  huge_page_address[20] = cpu_to_be32(0x6e223a20); 
+   //  huge_page_address[21] = cpu_to_be32(0x5b312c20); 
+   //  huge_page_address[22] = cpu_to_be32(0x385d2c20); 
+   //  huge_page_address[23] = cpu_to_be32(0x22646973); 
+   //  huge_page_address[24] = cpu_to_be32(0x706c6179); 
+   //  huge_page_address[25] = cpu_to_be32(0x6e616d65); 
+   //  huge_page_address[26] = cpu_to_be32(0x223a2022); 
+   //  huge_page_address[27] = cpu_to_be32(0x32383938); 
+   //  huge_page_address[28] = cpu_to_be32(0x34373237); 
+   //  huge_page_address[29] = cpu_to_be32(0x222c2022); 
+   //  huge_page_address[30] = cpu_to_be32(0x706f7274); 
+   //  huge_page_address[31] = cpu_to_be32(0x223a2031); 
+   //  huge_page_address[32] = cpu_to_be32(0x37353030); 
+   //  huge_page_address[33] = cpu_to_be32(0x2c20226e); 
+   //  huge_page_address[34] = cpu_to_be32(0x616d6573); 
+   //  huge_page_address[35] = cpu_to_be32(0x70616365); 
+   //  huge_page_address[36] = cpu_to_be32(0x73223a20); 
+   //  huge_page_address[37] = cpu_to_be32(0x5b363533); 
+   //  huge_page_address[38] = cpu_to_be32(0x36333938); 
+   //  huge_page_address[39] = cpu_to_be32(0x2c203631); 
+   //  huge_page_address[40] = cpu_to_be32(0x32373135); 
+   //  huge_page_address[41] = cpu_to_be32(0x315d7d00); //payload finishes in even number of dwords 
 
-    if (temp[0] == 0xcacabeef) printk(KERN_INFO "Myd: huge page 1 free\n");
+   //  my_drv_data->huge_page2_dma_addr = pci_map_single(pdev, page_address(my_drv_data->huge_page2), 2*1024*1024, PCI_DMA_FROMDEVICE);
 
-    if (temp[1] == 0xcacabeef) printk(KERN_INFO "Myd: huge page 2 free\n");
+   //  // send the address of the filled huge page to the board
+   //  *(((u64 *)my_drv_data->bar2) + 17) = my_drv_data->huge_page2_dma_addr;
+   //  // send to the board the number of qwords written to the huge page
+   //  *(((u32 *)my_drv_data->bar2) + 41) = 21;
+
+
+   //  #ifdef MY_DEBUG
+   //  printk(KERN_INFO "Myd: huge_page1 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page1_dma_addr >> 32), (int)(u64)my_drv_data->huge_page1_dma_addr);
+   //  printk(KERN_INFO "Myd: huge_page2 dma addr: 0x%08x %08x\n", (int)((u64)my_drv_data->huge_page2_dma_addr >> 32), (int)(u64)my_drv_data->huge_page2_dma_addr);
+   //  #endif
+
+   //  // check if huge page 1 is free. In this case we can reuse it or we can pass a new address instead
+   //  // in this case we reuse it
+   //  ssleep(5);
+   //  u32* temp;
+   //  temp = (u32 *)my_drv_data->tx_completion_buffer_kern_address;
+
+   //  if (temp[0] == 0xcacabeef) printk(KERN_INFO "Myd: huge page 1 free\n");
+
+   //  if (temp[1] == 0xcacabeef) printk(KERN_INFO "Myd: huge page 2 free\n");
 
     #ifdef MY_DEBUG
     printk(KERN_INFO "Myd: my_pcie_probe finished\n");
@@ -452,6 +459,8 @@ static int my_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     return ret;
 
 err_11:
+    pci_unmap_single(pdev, my_drv_data->huge_page2_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
+    pci_unmap_single(pdev, my_drv_data->huge_page1_dma_addr, 2*1024*1024, PCI_DMA_FROMDEVICE);  // unmap page
     __free_pages(my_drv_data->huge_page2, HPAGE_PMD_ORDER);
 err_10:
     __free_pages(my_drv_data->huge_page1, HPAGE_PMD_ORDER);

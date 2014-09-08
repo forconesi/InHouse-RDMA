@@ -69,7 +69,7 @@ module rx_tlp_trigger (
             if (trigger_fsm == s0) begin
                 free_running <= free_running +1;
                 timeout <= 1'b0;
-                if (free_running == 'hFFFF) begin
+                if (free_running == 'hA000) begin
                     timeout <= 1'b1;
                 end
             end
