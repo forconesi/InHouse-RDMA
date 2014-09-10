@@ -112,6 +112,7 @@ module tx_wr_pkt_to_bram (
     reg     [9:0]   aux_diff_256;
     reg     [9:0]   aux_diff_128;
     reg     [9:0]   qwords_to_rd_i;
+    reg     [7:0]   temp_wait;
     
     //-------------------------------------------------------
     // Local trigger_interrupts
@@ -158,6 +159,13 @@ module tx_wr_pkt_to_bram (
     reg     [31:0]  dw_aux;
     reg     [9:0]   look_ahead_wr_addr;
     reg     [3:0]   this_tlp_tag;
+
+    //-------------------------------------------------------
+    // Local temp
+    //-------------------------------------------------------
+    reg     [14:0]  temp_fsm;
+    reg     [3:0]   expected_tlp_tag;
+    (* KEEP = "TRUE" *)reg     [3:0]   xor_tlps;
 
     assign reset_n = ~trn_lnk_up_n;
 
@@ -391,7 +399,7 @@ module tx_wr_pkt_to_bram (
 
                 s7 : begin
                     if (huge_page_qwords_counter < current_huge_page_qwords) begin
-                        trigger_rd_tlp_fsm <= s1;
+                        trigger_rd_tlp_fsm <= s10;
                     end
                     else begin
                         return_huge_page_to_host <= 1'b1;
@@ -403,9 +411,31 @@ module tx_wr_pkt_to_bram (
                 s8 : begin
                     if (send_rd_completed_ack) begin
                         send_rd_completed <= 1'b0;
+                        trigger_rd_tlp_fsm <= s9;
+                    end
+                    temp_wait <= 'b0;
+                end
+
+                s9 : begin
+                    if (notify) begin
                         trigger_rd_tlp_fsm <= s0;
                     end
                 end
+
+                s10 : begin
+                    if (completion_received) begin
+                        if (tlp_tag_sent == this_tlp_tag) begin
+                            trigger_rd_tlp_fsm <= s1;
+                        end
+                    end
+                end
+
+              //  s9 : begin
+              //      temp_wait <= temp_wait + 1;
+              //      if (temp_wait == 8'hDC) begin
+              //          trigger_rd_tlp_fsm <= s0;
+              //      end
+              //  end
 
                 default : begin
                     trigger_rd_tlp_fsm <= s0;
@@ -713,6 +743,41 @@ module tx_wr_pkt_to_bram (
 
                 default : begin //other TLPs
                     wr_to_bram_fsm <= s0;
+                end
+
+            endcase
+        end     // not reset
+    end  //always
+
+    ////////////////////////////////////////////////
+    // temp
+    ////////////////////////////////////////////////
+    always @( posedge trn_clk or negedge reset_n ) begin
+
+        if (!reset_n ) begin  // reset
+            expected_tlp_tag <= 'b0;
+            temp_fsm <= s0;
+        end
+        
+        else begin  // not reset
+
+            xor_tlps <= expected_tlp_tag ^ this_tlp_tag;
+
+            case (temp_fsm)
+
+                s0 : begin
+                    if (completion_received) begin
+                        temp_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    expected_tlp_tag <= expected_tlp_tag + 1;
+                    temp_fsm <= s0;
+                end
+
+                default : begin
+                    temp_fsm <= s0;
                 end
 
             endcase
