@@ -102,7 +102,7 @@ module tx_wr_pkt_to_bram (
     reg     [31:0]  look_ahead_huge_page_qwords_counter;
     reg     [63:0]  look_ahead_huge_page_addr_read_from;
     reg     [31:0]  remaining_qwords;
-    reg     [1:0]   tag_to_hp[0:15];
+    reg     [1:0]   tag_to_hp[0:3];
     reg     [3:0]   tlp_tag_sent;
     reg     [9:0]   aux_diff0;
     reg     [9:0]   aux_diff_4k;
@@ -112,6 +112,11 @@ module tx_wr_pkt_to_bram (
     reg     [9:0]   aux_diff_256;
     reg     [9:0]   aux_diff_128;
     reg     [9:0]   qwords_to_rd_i;
+    reg     [9:0]   request_addr_bram;
+    reg     [9:0]   request_size[0:3];
+    reg     [2:0]   sent_requests;
+    reg     [2:0]   look_ahead_sent_requests;
+    reg     [2:0]   outstanding_requests;
     
     //-------------------------------------------------------
     // Local trigger_interrupts
@@ -158,6 +163,14 @@ module tx_wr_pkt_to_bram (
     reg     [31:0]  dw_aux;
     reg     [9:0]   look_ahead_wr_addr;
     reg     [3:0]   this_tlp_tag;
+    reg     [9:0]   tlp_addr[0:3];
+    reg     [9:0]   received_size[0:3];
+    reg     [3:0]   target_tlp;
+    reg     [3:0]   next_target_tlp;
+    reg     [9:0]   look_ahead_received_size;
+    reg     [9:0]   look_ahead_tlp_addr;
+    reg     [2:0]   completed_requests;
+    reg     [2:0]   look_ahead_completed_requests;
 
     assign reset_n = ~trn_lnk_up_n;
 
@@ -256,6 +269,7 @@ module tx_wr_pkt_to_bram (
             send_rd_completed <= 1'b0;
             diff <= 'b0;
             next_wr_addr <= 'b0;
+            sent_requests <= 'b0;
             trigger_rd_tlp_fsm <= s0;
         end
         
@@ -264,6 +278,7 @@ module tx_wr_pkt_to_bram (
             return_huge_page_to_host <= 1'b0;
             diff <= next_wr_addr + (~commited_rd_addr) + 1;
             remaining_qwords <= current_huge_page_qwords + (~huge_page_qwords_counter) + 1;
+            outstanding_requests <= sent_requests + (~completed_requests) + 1;
 
             aux_diff0 <= diff + remaining_qwords;   // desired
             aux_diff_4k <= diff + 'h200;
@@ -284,11 +299,14 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s1 : begin
-                    // remaining_qwords
-                    trigger_rd_tlp_fsm <= s2;
+                    // dealy for remaining_qwords calculation
+                    if (outstanding_requests < 'h4) begin
+                        trigger_rd_tlp_fsm <= s2;
+                    end
                 end
 
                 s2 : begin
+                    look_ahead_sent_requests <= sent_requests + 1;
                     if (remaining_qwords > 'h200) begin
                         trigger_rd_tlp_fsm <= s3;
                     end
@@ -368,6 +386,10 @@ module tx_wr_pkt_to_bram (
                     look_ahead_huge_page_addr_read_from <= huge_page_addr_read_from + {qwords_to_rd_i, 3'b0};
                     look_ahead_huge_page_qwords_counter <= huge_page_qwords_counter + qwords_to_rd_i;
 
+                    request_addr_bram <= next_wr_addr;
+                    request_size[tlp_tag] <= qwords_to_rd_i;
+                    sent_requests <= look_ahead_sent_requests;
+
                     tlp_tag_sent <= tlp_tag;
                     if (read_chunk_ack) begin
                         read_chunk <= 1'b0;
@@ -390,17 +412,22 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s7 : begin
-                    if (huge_page_qwords_counter < current_huge_page_qwords) begin
+                    // dealy for remaining_qwords calculation
+                    trigger_rd_tlp_fsm <= s8;
+                end
+
+                s8 : begin
+                    if (remaining_qwords) begin
                         trigger_rd_tlp_fsm <= s1;
                     end
                     else begin
                         return_huge_page_to_host <= 1'b1;
                         send_rd_completed <= 1'b1;
-                        trigger_rd_tlp_fsm <= s8;
+                        trigger_rd_tlp_fsm <= s9;
                     end
                 end
 
-                s8 : begin
+                s9 : begin
                     if (send_rd_completed_ack) begin
                         send_rd_completed <= 1'b0;
                         trigger_rd_tlp_fsm <= s0;
@@ -670,20 +697,39 @@ module tx_wr_pkt_to_bram (
             completion_received <= 1'b0;
             commited_wr_addr <= 'b0;
             this_tlp_tag <= 'b0;
+            completed_requests <= 'b0;
             wr_to_bram_fsm <= s0;
         end
         
         else begin  // not reset
 
-            wr_addr <= look_ahead_wr_addr;
             wr_en <= 1'b1;
             completion_received <= 1'b0;
+
+            if (read_chunk && read_chunk_ack) begin
+                tlp_addr[tlp_tag] <= request_addr_bram;
+                received_size[tlp_tag] <= 'b0;
+            end
+
+            next_target_tlp <= target_tlp +1;
+            look_ahead_completed_requests <= completed_requests +1;
+            if (completion_received) begin
+                if (received_size[target_tlp] == request_size[target_tlp]) begin
+                    target_tlp <= next_target_tlp;
+                    completed_requests <= look_ahead_completed_requests;
+                end
+            end
+
+            if (completion_received) begin
+                if (target_tlp == this_tlp_tag) begin                   // provided that tlps of one single request are received in order
+                    commited_wr_addr <= look_ahead_wr_addr;
+                end
+            end
 
             case (wr_to_bram_fsm)
 
                 s0 : begin
                     qwords_on_tlp <= trn_rd[41:33];
-                    commited_wr_addr <= look_ahead_wr_addr;
                     if ( (!trn_rsrc_rdy_n) && (!trn_rsof_n) && (!trn_rdst_rdy_n)) begin
                         if ( (trn_rd[62:56] == `CPL_MEM_RD64_FMT_TYPE) && (trn_rd[15:13] == `SC) ) begin
                             wr_to_bram_fsm <= s1;
@@ -692,7 +738,12 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s1 : begin
+                    look_ahead_received_size <= received_size[trn_rd[43:40]] + qwords_on_tlp;
+                    look_ahead_tlp_addr <= tlp_addr[trn_rd[43:40]] + qwords_on_tlp;
                     this_tlp_tag <= trn_rd[43:40];
+
+                    look_ahead_wr_addr <= tlp_addr[trn_rd[43:40]];
+
                     dw_aux <= trn_rd[31:0];
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
                         wr_to_bram_fsm <= s2;
@@ -700,6 +751,10 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s2 : begin
+                    tlp_addr[this_tlp_tag] <= look_ahead_tlp_addr;
+                    received_size[this_tlp_tag] <= look_ahead_received_size;
+
+                    wr_addr <= look_ahead_wr_addr;
                     wr_data <= {trn_rd[39:32], trn_rd[47:40], trn_rd[55:48], trn_rd[63:56], dw_aux[7:0], dw_aux[15:8], dw_aux[23:16], dw_aux[31:24]};
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
                         look_ahead_wr_addr <= look_ahead_wr_addr +1;
