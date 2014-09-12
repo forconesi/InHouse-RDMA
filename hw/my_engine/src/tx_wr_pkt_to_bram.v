@@ -53,7 +53,9 @@ module tx_wr_pkt_to_bram (
     output reg              wr_en,
 
     input       [9:0]       commited_rd_addr,
-    output reg  [9:0]       commited_wr_addr
+    output reg  [9:0]       commited_wr_addr,
+
+    output reg  [9:0]       eth_pkt_in
     );
 
     wire            reset_n;
@@ -171,6 +173,14 @@ module tx_wr_pkt_to_bram (
     reg     [9:0]   look_ahead_tlp_addr;
     reg     [2:0]   completed_requests;
     reg     [2:0]   look_ahead_completed_requests;
+
+    //-------------------------------------------------------
+    // Local ethernet frames counter (eth_pkt_fsm)
+    //-------------------------------------------------------
+    reg     [14:0]  eth_pkt_fsm;
+    reg     [9:0]   next_eth_pkt_in;
+    reg     [9:0]   sof_addr_plus1;
+    reg     [31:0]  pkt_len_in;
 
     assign reset_n = ~trn_lnk_up_n;
 
@@ -768,6 +778,51 @@ module tx_wr_pkt_to_bram (
 
                 default : begin //other TLPs
                     wr_to_bram_fsm <= s0;
+                end
+
+            endcase
+        end     // not reset
+    end  //always
+
+    ////////////////////////////////////////////////
+    // ethernet frames counter (eth_pkt_fsm)
+    ////////////////////////////////////////////////
+    always @( posedge trn_clk or negedge reset_n ) begin
+
+        if (!reset_n ) begin  // reset
+            eth_pkt_fsm <= s0;
+            eth_pkt_in <= 'b0;
+            next_eth_pkt_in <= 'b0;
+            sof_addr_plus1 <= 'b0;
+        end
+        
+        else begin  // not reset
+
+            case (eth_pkt_fsm)
+
+                s0 : begin
+                    pkt_len_in <= wr_data[63:32];
+                    if (look_ahead_wr_addr == sof_addr_plus1) begin
+                        eth_pkt_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    eth_pkt_in <= next_eth_pkt_in;
+                    sof_addr_plus1 <= pkt_len_in[12:3] +1;
+                    eth_pkt_fsm <= s2;
+                end
+
+                s2 : begin
+                    next_eth_pkt_in <= next_eth_pkt_in +1;
+                    if (pkt_len_in[2:0]) begin
+                        sof_addr_plus1 <= sof_addr_plus1 +1;
+                    end
+                    eth_pkt_fsm <= s0;
+                end
+
+                default : begin
+                    eth_pkt_fsm <= s0;
                 end
 
             endcase
