@@ -16,7 +16,9 @@ module rx_tlp_trigger (
     output reg              change_huge_page,
     input                   change_huge_page_ack,
     output reg              send_last_tlp,
-    output reg [4:0]        qwords_to_send
+    output reg [4:0]        qwords_to_send,
+    input                   huge_page_status_1,
+    input                   huge_page_status_2
     );
 
     // localparam
@@ -71,6 +73,11 @@ module rx_tlp_trigger (
                 timeout <= 1'b0;
                 if (free_running == 'hA000) begin
                     timeout <= 1'b1;
+                end
+                else if (huge_page_status_1 && huge_page_status_2) begin
+                    if (free_running == 'h10) begin
+                        timeout <= 1'b1;
+                    end
                 end
             end
             else begin

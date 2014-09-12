@@ -30,6 +30,8 @@ module  pci_exp_64b_app (
     output                                        rx_change_huge_page_ack,
     input                                         rx_send_last_tlp,
     input      [4:0]                              rx_qwords_to_send,
+    output                                        rx_huge_page_status_1,
+    output                                        rx_huge_page_status_2,
 
     // To rx_mac_interface //
     output     [`BF:0]                            rx_commited_rd_address,
@@ -137,8 +139,8 @@ module  pci_exp_64b_app (
     //-------------------------------------------------------
     wire   [63:0]     rx_huge_page_addr_1;
     wire   [63:0]     rx_huge_page_addr_2;
-    wire              rx_huge_page_status_1;
-    wire              rx_huge_page_status_2;
+    //wire              rx_huge_page_status_1;
+    //wire              rx_huge_page_status_2;
     wire              rx_huge_page_free_1;
     wire              rx_huge_page_free_2;
 

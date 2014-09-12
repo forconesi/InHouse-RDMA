@@ -88,7 +88,7 @@ module tx_mac_interface (
         else begin  // not reset
 
             take_your_chances <= 1'b0;
-            if (diff >= 'h8) begin                      // I haven't thought very well about this mechanism and this number
+            if (diff >= 'h10) begin
                 take_your_chances <= 1'b1;
             end
             
@@ -220,8 +220,14 @@ module tx_mac_interface (
                 s1 : begin
                     rd_addr_sof <= rd_addr_prev0;
                     rd_addr_i <= rd_addr_i +1;
-                    tx_start <= 1'b1;
-                    tx_frame_fsm <= s2;
+                    if (!take_your_chances) begin       // abort
+                        rd_addr_i <= rd_addr_prev0;
+                        tx_frame_fsm <= s0;
+                    end
+                    else begin
+                        tx_start <= 1'b1;
+                        tx_frame_fsm <= s2;
+                    end
                 end
 
                 s2 : begin

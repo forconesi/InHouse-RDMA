@@ -28,7 +28,13 @@ module rx_trigger_synch (
     output reg                send_last_tlp_out,
 
     input         [4:0]       qwords_to_send_in,
-    output reg    [4:0]       qwords_to_send_out
+    output reg    [4:0]       qwords_to_send_out,
+
+    input                     huge_page_status_1_in,
+    output reg                huge_page_status_1_out,
+
+    input                     huge_page_status_2_in,
+    output reg                huge_page_status_2_out
     );
 
     // localparam
@@ -63,6 +69,8 @@ module rx_trigger_synch (
     reg              change_huge_page_internal_ack_reg0;
     reg              change_huge_page_internal_ack_reg1;
     reg     [4:0]    qwords_to_send_internal;
+    reg              huge_page_status_1_reg0;
+    reg              huge_page_status_2_reg0;
 
     //-------------------------------------------------------
     // Local clk_out - trigger_tlp & send_last_tlp & qwords_to_send
@@ -99,10 +107,20 @@ module rx_trigger_synch (
             change_huge_page_internal_ack_reg0 <= 1'b0;
             change_huge_page_internal_ack_reg1 <= 1'b0;
 
+            huge_page_status_1_reg0 <= 1'b0;
+            huge_page_status_1_out <= 1'b0;
+            huge_page_status_2_reg0 <= 1'b0;
+            huge_page_status_2_out <= 1'b0;
+
             fsm_clk_in <= s0;
         end
         
         else begin  // not reset
+
+            huge_page_status_1_reg0 <= huge_page_status_1_in;
+            huge_page_status_1_out <= huge_page_status_1_reg0;
+            huge_page_status_2_reg0 <= huge_page_status_2_in;
+            huge_page_status_2_out <= huge_page_status_2_reg0;
 
             trigger_tlp_internal_ack_reg0 <= trigger_tlp_internal_ack;
             trigger_tlp_internal_ack_reg1 <= trigger_tlp_internal_ack_reg0;

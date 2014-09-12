@@ -224,6 +224,8 @@ module my_top (
     wire                                              rx_change_huge_page;
     wire                                              rx_send_last_tlp;
     wire   [4:0]                                      rx_qwords_to_send;
+    wire                                              rx_huge_page_status_1;
+    wire                                              rx_huge_page_status_2;
 
     //-------------------------------------------------------
     // Local Wires rx_rd_addr_synch
@@ -242,6 +244,8 @@ module my_top (
     wire   [4:0]                                      rx_qwords_to_send_synch;
     wire                                              rx_trigger_tlp_ack;
     wire                                              rx_change_huge_page_ack;
+    wire                                              rx_huge_page_status_1_synch;
+    wire                                              rx_huge_page_status_2_synch;
 
     //////////////////////////////////////////////////////////////////////////////////////////
     // Transmition side of the NIC signal declaration
@@ -512,7 +516,9 @@ module my_top (
         .change_huge_page(rx_change_huge_page),                // O
         .change_huge_page_ack(rx_change_huge_page_ack_synch),  // I
         .send_last_tlp(rx_send_last_tlp),                      // O
-        .qwords_to_send(rx_qwords_to_send)                     // O [4:0]
+        .qwords_to_send(rx_qwords_to_send),                    // O [4:0]
+        .huge_page_status_1(rx_huge_page_status_1_synch),      // I 
+        .huge_page_status_2(rx_huge_page_status_2_synch)       // I 
         );
     
     //-------------------------------------------------------
@@ -546,7 +552,11 @@ module my_top (
         .send_last_tlp_in(rx_send_last_tlp),                      // I 
         .send_last_tlp_out(rx_send_last_tlp_synch),               // O 
         .qwords_to_send_in(rx_qwords_to_send),                    // I [4:0]
-        .qwords_to_send_out(rx_qwords_to_send_synch)              // O [4:0]
+        .qwords_to_send_out(rx_qwords_to_send_synch),             // O [4:0]
+        .huge_page_status_1_in(rx_huge_page_status_1),            // I 
+        .huge_page_status_1_out(rx_huge_page_status_1_synch),     // O 
+        .huge_page_status_2_in(rx_huge_page_status_2),            // I 
+        .huge_page_status_2_out(rx_huge_page_status_2_synch)      // O 
         );
     //////////////////////////////////////////////////////////////////////////////////////////
     // Reception side of the NIC (END)
@@ -646,6 +656,8 @@ module my_top (
         .rx_change_huge_page_ack(rx_change_huge_page_ack),        // O
         .rx_send_last_tlp(rx_send_last_tlp_synch),                // I
         .rx_qwords_to_send(rx_qwords_to_send_synch),              // I [4:0]
+        .rx_huge_page_status_1(rx_huge_page_status_1),            // O 
+        .rx_huge_page_status_2(rx_huge_page_status_2),            // O 
 
         // To rx_mac_interface  //
         .rx_commited_rd_address(rx_commited_rd_address),          // O [`BF:0]
