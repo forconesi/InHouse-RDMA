@@ -97,8 +97,9 @@ module tx_mac_interface (
             case (trigger_frame_fsm)
 
                 s0 : begin
+                    byte_counter <= rd_data[63:32];
                     if (diff) begin
-                        byte_counter <= rd_data[63:32];
+                        qwords_in_eth <= rd_data[44:35];
                         trigger_frame_fsm <= s1;
                     end
                 end
@@ -107,13 +108,7 @@ module tx_mac_interface (
                     if (byte_counter[2:0]) begin
                         qwords_in_eth <= byte_counter[12:3] +1;
                     end
-                    else begin
-                        qwords_in_eth <= byte_counter[12:3];
-                    end
-                    trigger_frame_fsm <= s2;
-                end
 
-                s2 : begin
                     case (byte_counter[2:0])                    // my deco
                         3'b000 : begin
                             last_tx_data_valid <= 8'b11111111;
@@ -141,16 +136,21 @@ module tx_mac_interface (
                         end
                     endcase
 
-                    if (diff >= qwords_in_eth) begin
+                    if (!diff) begin
+                        trigger_frame_fsm <= s0;
+                    end
+                    else if (diff >= qwords_in_eth) begin
                         trigger_tx_frame <= 1'b1;
-                        trigger_frame_fsm <= s3;
+                        trigger_frame_fsm <= s2;
                     end
                 end
 
-                s3 : begin
+                s2 : begin
                     trigger_tx_frame <= 1'b0;
+                    byte_counter <= rd_data[63:32];
                     if (synch) begin
-                        trigger_frame_fsm <= s0;
+                        qwords_in_eth <= rd_data[44:35];
+                        trigger_frame_fsm <= s1;
                     end
                 end
 
@@ -191,6 +191,10 @@ module tx_mac_interface (
             rd_addr_prev0 <= rd_addr_i;
             end_of_eth_frame <= 1'b0;
 
+            if (end_of_eth_frame) begin
+                commited_rd_addr <= rd_addr_prev0;
+            end
+
 ////////////////////////////////////////////////
 // INSTRUMENTATION
 ////////////////////////////////////////////////
@@ -207,7 +211,6 @@ module tx_mac_interface (
 
                 s0: begin
                     next_rd_addr <= rd_addr_i +1;
-                    commited_rd_addr <= rd_addr_i;
                     if (trigger_tx_frame) begin
                         rd_addr_i <= next_rd_addr;
                         tx_frame_fsm <= s1;
@@ -254,19 +257,19 @@ module tx_mac_interface (
                         synch <= 1'b1;
                         end_of_eth_frame <= 1'b1;
                         tx_data_valid <= last_tx_data_valid;
-                        //if (!take_your_chances) begin           // the normal case
+                        if (!take_your_chances) begin           // the normal case
                             rd_addr_i <= rd_addr_i;
                             tx_frame_fsm <= s0;
-                        //end
-                        //else begin
-                            //tx_frame_fsm <= s1;
-                        //end
+                        end
+                        else begin
+                            tx_frame_fsm <= s1;
+                        end
                     end
-                    //else if (diff == 'h1) begin
-                        //tx_underrun <= 1'b1;
-                        //rd_addr_i <= rd_addr_sof;
-                        //tx_frame_fsm <= s6;
-                    //end
+                    else if (diff == 'h1) begin
+                        tx_underrun <= 1'b1;
+                        rd_addr_i <= rd_addr_sof;
+                        tx_frame_fsm <= s6;
+                    end
                 end
 
                 s6 : begin
