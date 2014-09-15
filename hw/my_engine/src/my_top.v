@@ -253,9 +253,9 @@ module my_top (
     //-------------------------------------------------------
     // Local Wires internal_true_dual_port_ram tx
     //-------------------------------------------------------
-    wire   [`BF:0]                                    tx_wr_addr;
+    wire   [8:0]                                      tx_wr_addr;
     wire   [63:0]                                     tx_wr_data;
-    wire   [`BF:0]                                    tx_rd_addr;
+    wire   [8:0]                                      tx_rd_addr;
     wire   [63:0]                                     tx_rd_data;
     wire                                              tx_wr_clk;
     wire                                              tx_wr_en;
@@ -569,9 +569,9 @@ module my_top (
     // internal_true_dual_port_ram tx
     //-------------------------------------------------------
     tx_buffer tx_buffer_mod (
-        .a(tx_wr_addr),                                        // I [`BF:0]
+        .a(tx_wr_addr),                                        // I [8:0]
         .d(tx_wr_data),                                        // I [63:0]
-        .dpra(tx_rd_addr),                                     // I [`BF:0]
+        .dpra(tx_rd_addr),                                     // I [8:0]
         .clk(tx_wr_clk),                                       // I 
         .we(tx_wr_en),                                         // I
         .qdpo_clk(tx_rd_clk),                                  // I
@@ -593,7 +593,7 @@ module my_top (
         .tx_data_valid(mac_tx_data_valid),                     // O [7:0]
         .tx_start(mac_tx_start),                               // O
         .tx_ack(mac_tx_ack),                                   // I
-        .rd_addr(tx_rd_addr),                                  // O [`BF:0]
+        .rd_addr(tx_rd_addr),                                  // O [8:0]
         .rd_data(tx_rd_data),                                  // I [63:0]
         .commited_rd_addr(tx_commited_rd_addr),                // O [9:0]
         .commited_wr_addr(tx_commited_wr_addr_synch)           // I [9:0]
@@ -678,7 +678,7 @@ module my_top (
         .rx_rd_data(rx_rd_data),                                  // I [63:0]
 
         // To internal_true_dual_port_ram TX  //
-        .tx_wr_addr(tx_wr_addr),                                  // O [`BF:0]
+        .tx_wr_addr(tx_wr_addr),                                  // O [8:0]
         .tx_wr_data(tx_wr_data),                                  // O [63:0]
         .tx_wr_en(tx_wr_en),                                      // O
 

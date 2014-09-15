@@ -52,7 +52,7 @@ module  pci_exp_64b_app (
     input      [63:0]                             rx_rd_data,
 
     // To internal_true_dual_port_ram TX  //
-    output     [`BF:0]                            tx_wr_addr,
+    output     [8:0]                              tx_wr_addr,
     output     [63:0]                             tx_wr_data,
     output                                        tx_wr_en,
 
@@ -445,7 +445,7 @@ module  pci_exp_64b_app (
         .notify_ack(tx_notify_ack),                            // I
         .send_interrupt(tx_send_interrupt),                    // O 
         .send_interrupt_ack(tx_send_interrupt_ack),            // I
-        .wr_addr(tx_wr_addr),                                  // O [`BF:0]
+        .wr_addr(tx_wr_addr),                                  // O [8:0]
         .wr_data(tx_wr_data),                                  // O [63:0]
         .wr_en(tx_wr_en),                                      // O
         .commited_rd_addr(tx_commited_rd_addr),                // I [9:0]
