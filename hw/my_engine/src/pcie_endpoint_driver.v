@@ -24,14 +24,7 @@ module  pci_exp_64b_app (
     input      [3:0]                              trn_tbuf_av,
 
     // To rx_tlp_trigger  //
-    input                                         rx_trigger_tlp,
-    output                                        rx_trigger_tlp_ack,
-    input                                         rx_change_huge_page,
-    output                                        rx_change_huge_page_ack,
-    input                                         rx_send_last_tlp,
-    input      [4:0]                              rx_qwords_to_send,
-    output                                        rx_huge_page_status_1,
-    output                                        rx_huge_page_status_2,
+    input      [`BF:0]                            rx_commited_wr_address,
 
     // To rx_mac_interface //
     output     [`BF:0]                            rx_commited_rd_address,
@@ -139,8 +132,8 @@ module  pci_exp_64b_app (
     //-------------------------------------------------------
     wire   [63:0]     rx_huge_page_addr_1;
     wire   [63:0]     rx_huge_page_addr_2;
-    //wire              rx_huge_page_status_1;
-    //wire              rx_huge_page_status_2;
+    wire              rx_huge_page_status_1;
+    wire              rx_huge_page_status_2;
     wire              rx_huge_page_free_1;
     wire              rx_huge_page_free_2;
 
@@ -150,6 +143,16 @@ module  pci_exp_64b_app (
     wire              rx_trn_teof_n;
     wire              rx_trn_tsrc_rdy_n;
     wire              rx_cfg_interrupt_n;
+
+    //-------------------------------------------------------
+    // Local Wires rx_tlp_trigger
+    //-------------------------------------------------------
+    wire               rx_trigger_tlp;
+    wire               rx_trigger_tlp_ack;
+    wire               rx_change_huge_page;
+    wire               rx_change_huge_page_ack;
+    wire               rx_send_last_tlp;
+    wire   [4:0]       rx_qwords_to_send;
 
     //////////////////////////////////////////////////////////////////////////////////////////
     // Transmition side of the NIC signal declaration
@@ -211,6 +214,7 @@ module  pci_exp_64b_app (
     // Local Interrupt control logic
     //-------------------------------------------------------
     wire              interrupts_enabled;
+    wire   [31:0]     interrupt_period;
     wire              mdio_access_cfg_interrupt_n;
 
     //-------------------------------------------------------
@@ -310,6 +314,27 @@ module  pci_exp_64b_app (
         );
 
     //-------------------------------------------------------
+    // rx_tlp_trigger
+    //-------------------------------------------------------
+    rx_tlp_trigger rx_tlp_trigger_mod (
+        .clk(trn_clk),                                         // I
+        .trn_lnk_up_n(trn_lnk_up_n),                           // I
+        .cfg_interrupt_n(rx_cfg_interrupt_n),                  // O
+        .cfg_interrupt_rdy_n(cfg_interrupt_rdy_n),             // I
+        .interrupts_enabled(interrupts_enabled),               // I
+        .interrupt_period(interrupt_period),                   // I [31:0]
+        .commited_wr_address(rx_commited_wr_address),          // I [`BF:0]
+        .trigger_tlp(rx_trigger_tlp),                          // O
+        .trigger_tlp_ack(rx_trigger_tlp_ack),                  // I
+        .change_huge_page(rx_change_huge_page),                // O
+        .change_huge_page_ack(rx_change_huge_page_ack),        // I
+        .send_last_tlp(rx_send_last_tlp),                      // O
+        .qwords_to_send(rx_qwords_to_send),                    // O [4:0]
+        .huge_page_status_1(rx_huge_page_status_1),            // I 
+        .huge_page_status_2(rx_huge_page_status_2)             // I 
+        );
+
+    //-------------------------------------------------------
     // rx_wr_pkt_to_hugepages
     //-------------------------------------------------------
     rx_wr_pkt_to_hugepages rx_wr_pkt_to_hugepages_mod (
@@ -323,15 +348,12 @@ module  pci_exp_64b_app (
         .trn_tdst_rdy_n(trn_tdst_rdy_n),                       // I
         .trn_tbuf_av(trn_tbuf_av),                             // I [3:0]
         .cfg_completer_id(cfg_completer_id),                   // I [15:0]
-        .cfg_interrupt_n(rx_cfg_interrupt_n),                  // O
-        .cfg_interrupt_rdy_n(cfg_interrupt_rdy_n),             // I
         .huge_page_addr_1(rx_huge_page_addr_1),                // I [63:0]
         .huge_page_addr_2(rx_huge_page_addr_2),                // I [63:0]
         .huge_page_status_1(rx_huge_page_status_1),            // I
         .huge_page_status_2(rx_huge_page_status_2),            // I
         .huge_page_free_1(rx_huge_page_free_1),                // O
         .huge_page_free_2(rx_huge_page_free_2),                // O
-        .interrupts_enabled(interrupts_enabled),               // I
         .trigger_tlp(rx_trigger_tlp),                          // I
         .trigger_tlp_ack(rx_trigger_tlp_ack),                  // O
         .change_huge_page(rx_change_huge_page),                // I
@@ -491,7 +513,8 @@ module  pci_exp_64b_app (
         .trn_rsrc_dsc_n(trn_rsrc_dsc_n),                       // I
         .trn_rbar_hit_n(trn_rbar_hit_n),                       // I [6:0]
         .trn_rdst_rdy_n(trn_rdst_rdy_n),                       // I
-        .interrupts_enabled(interrupts_enabled)                // O
+        .interrupts_enabled(interrupts_enabled),               // O
+        .interrupt_period(interrupt_period)                    // O [31:0]
         );
 
 endmodule // pci_exp_64b_app

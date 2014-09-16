@@ -23,7 +23,8 @@ module interrupt_en (
     input                   trn_rsrc_dsc_n,
     input       [6:0]       trn_rbar_hit_n,
     input                   trn_rdst_rdy_n,
-    output reg              interrupts_enabled
+    output reg              interrupts_enabled,
+    output reg  [31:0]      interrupt_period
     );
 
     // localparam
@@ -37,6 +38,8 @@ module interrupt_en (
     wire            reset_n = ~trn_lnk_up_n;
 
     reg     [7:0]   state;
+    reg     [31:0]  aux_dw;
+    reg     [31:0]  aux_dw2;
 
     ////////////////////////////////////////////////
     // interrupts_enabled & TLP reception
@@ -45,6 +48,7 @@ module interrupt_en (
 
         if (!reset_n ) begin  // reset
             interrupts_enabled <= 1'b1;
+            interrupt_period <= 'h3D090;
             state <= s0;
         end
         
@@ -60,12 +64,22 @@ module interrupt_en (
                 end
 
                 s1 : begin
+                    aux_dw <= trn_rd[31:0];
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
                         case (trn_rd[39:34])
 
-                            6'b001000 : begin     // interrupts eneable and disable
-                                interrupts_enabled <= ~interrupts_enabled;
+                            6'b001000 : begin     // interrupts eneable
+                                interrupts_enabled <= 1'b1;
                                 state <= s0;
+                            end
+
+                            6'b001001 : begin     // interrupts disable
+                                interrupts_enabled <= 1'b0;
+                                state <= s0;
+                            end
+
+                            6'b001010 : begin     // interrupts period
+                                state <= s2;
                             end
 
                             default : begin //other addresses
@@ -74,6 +88,22 @@ module interrupt_en (
 
                         endcase
                     end
+                end
+
+                s2 : begin
+                    aux_dw2[7:0] <= aux_dw[31:24];
+                    aux_dw2[15:8] <= aux_dw[23:16];
+                    aux_dw2[23:16] <= aux_dw[15:8];
+                    aux_dw2[31:24] <= aux_dw[7:0];
+                    state <= s3;
+                    if (!aux_dw) begin  // zero is invalid
+                        state <= s0;
+                    end
+                end
+
+                s3 : begin
+                    interrupt_period[29:0] <= aux_dw2[31:2];
+                    state <= s0;
                 end
 
                 default : begin //other TLPs

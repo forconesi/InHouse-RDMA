@@ -20,8 +20,6 @@ module rx_wr_pkt_to_hugepages (
     input                  trn_tdst_rdy_n,
     input       [3:0]      trn_tbuf_av,
     input       [15:0]     cfg_completer_id,
-    output reg             cfg_interrupt_n,
-    input                  cfg_interrupt_rdy_n,
 
     // Internal logic  //
     input       [63:0]     huge_page_addr_1,
@@ -30,7 +28,6 @@ module rx_wr_pkt_to_hugepages (
     input                  huge_page_status_2,
     output reg             huge_page_free_1,
     output reg             huge_page_free_2,
-    input                  interrupts_enabled,
 
     input                  trigger_tlp,
     output reg             trigger_tlp_ack,
@@ -181,7 +178,6 @@ module rx_wr_pkt_to_hugepages (
             trn_tsof_n <= 1'b1;
             trn_teof_n <= 1'b1;
             trn_tsrc_rdy_n <= 1'b1;
-            cfg_interrupt_n <= 1'b1;
 
             endpoint_not_ready <= 1'b0;
             remember_to_change_huge_page <= 1'b0;
@@ -389,19 +385,6 @@ module rx_wr_pkt_to_hugepages (
                     if (!trn_tdst_rdy_n) begin
                         trn_teof_n <= 1'b1;
                         trn_tsrc_rdy_n <= 1'b1;
-                        if (interrupts_enabled) begin
-                            cfg_interrupt_n <= 1'b0;
-                            send_fsm <= s12;
-                        end
-                        else begin
-                            send_fsm <= s0;
-                        end
-                    end
-                end
-
-                s12 : begin
-                    if (!cfg_interrupt_rdy_n) begin
-                        cfg_interrupt_n <= 1'b1;
                         send_fsm <= s0;
                     end
                 end

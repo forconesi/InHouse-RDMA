@@ -218,34 +218,15 @@ module my_top (
     wire   [`BF:0]                                    rx_commited_wr_address;
     
     //-------------------------------------------------------
-    // Local Wires rx_tlp_trigger
-    //-------------------------------------------------------
-    wire                                              rx_trigger_tlp;
-    wire                                              rx_change_huge_page;
-    wire                                              rx_send_last_tlp;
-    wire   [4:0]                                      rx_qwords_to_send;
-    wire                                              rx_huge_page_status_1;
-    wire                                              rx_huge_page_status_2;
-
-    //-------------------------------------------------------
     // Local Wires rx_rd_addr_synch
     //-------------------------------------------------------
     wire   [`BF:0]                                    rx_commited_rd_address;
     wire   [`BF:0]                                    rx_commited_rd_address_synch;
 
     //-------------------------------------------------------
-    // Local Wires rx_trigger_synch
+    // Local Wires rx_wr_addr_synch
     //-------------------------------------------------------
-    wire                                              rx_trigger_tlp_synch;
-    wire                                              rx_trigger_tlp_ack_synch;
-    wire                                              rx_change_huge_page_synch;
-    wire                                              rx_change_huge_page_ack_synch;
-    wire                                              rx_send_last_tlp_synch;
-    wire   [4:0]                                      rx_qwords_to_send_synch;
-    wire                                              rx_trigger_tlp_ack;
-    wire                                              rx_change_huge_page_ack;
-    wire                                              rx_huge_page_status_1_synch;
-    wire                                              rx_huge_page_status_2_synch;
+    wire   [`BF:0]                                    rx_commited_wr_address_synch;
 
     //////////////////////////////////////////////////////////////////////////////////////////
     // Transmition side of the NIC signal declaration
@@ -505,23 +486,6 @@ module my_top (
         );
 
     //-------------------------------------------------------
-    // rx_tlp_trigger
-    //-------------------------------------------------------
-    rx_tlp_trigger rx_tlp_trigger_mod (
-        .clk(clk156_25),                                       // I
-        .reset_n(reset_n),                                     // I
-        .commited_wr_address(rx_commited_wr_address),          // I [`BF:0]
-        .trigger_tlp(rx_trigger_tlp),                          // O
-        .trigger_tlp_ack(rx_trigger_tlp_ack_synch),            // I
-        .change_huge_page(rx_change_huge_page),                // O
-        .change_huge_page_ack(rx_change_huge_page_ack_synch),  // I
-        .send_last_tlp(rx_send_last_tlp),                      // O
-        .qwords_to_send(rx_qwords_to_send),                    // O [4:0]
-        .huge_page_status_1(rx_huge_page_status_1_synch),      // I 
-        .huge_page_status_2(rx_huge_page_status_2_synch)       // I 
-        );
-    
-    //-------------------------------------------------------
     // rx_rd_addr_synch
     //-------------------------------------------------------
     rx_rd_addr_synch rx_rd_addr_synch_mod (
@@ -534,29 +498,15 @@ module my_top (
         );
 
     //-------------------------------------------------------
-    // rx_trigger_synch
+    // rx_wr_addr_synch
     //-------------------------------------------------------
-    rx_trigger_synch rx_trigger_synch_mod (
-        .clk_out(trn_clk_c),                                      // I
-        .reset_n_clk_out(reset_n_pcie_domain),                    // I
-        .clk_in(clk156_25),                                       // I
-        .reset_n_clk_in(reset_n),                                 // I
-        .trigger_tlp_in(rx_trigger_tlp),                          // I 
-        .trigger_tlp_out(rx_trigger_tlp_synch),                   // O 
-        .trigger_tlp_ack_in(rx_trigger_tlp_ack),                  // I 
-        .trigger_tlp_ack_out(rx_trigger_tlp_ack_synch),           // O 
-        .change_huge_page_in(rx_change_huge_page),                // I 
-        .change_huge_page_out(rx_change_huge_page_synch),         // O
-        .change_huge_page_ack_in(rx_change_huge_page_ack),        // I
-        .change_huge_page_ack_out(rx_change_huge_page_ack_synch), // O
-        .send_last_tlp_in(rx_send_last_tlp),                      // I 
-        .send_last_tlp_out(rx_send_last_tlp_synch),               // O 
-        .qwords_to_send_in(rx_qwords_to_send),                    // I [4:0]
-        .qwords_to_send_out(rx_qwords_to_send_synch),             // O [4:0]
-        .huge_page_status_1_in(rx_huge_page_status_1),            // I 
-        .huge_page_status_1_out(rx_huge_page_status_1_synch),     // O 
-        .huge_page_status_2_in(rx_huge_page_status_2),            // I 
-        .huge_page_status_2_out(rx_huge_page_status_2_synch)      // O 
+    rx_wr_addr_synch rx_wr_addr_synch_mod (
+        .clk_out(trn_clk_c),                                    // I
+        .reset_n_clk_out(reset_n_pcie_domain),                  // I
+        .clk_in(clk156_25),                                     // I
+        .reset_n_clk_in(reset_n),                               // I
+        .commited_wr_address_in(rx_commited_wr_address),        // I [`BF:0]
+        .commited_wr_address_out(rx_commited_wr_address_synch)  // O [`BF:0]
         );
     //////////////////////////////////////////////////////////////////////////////////////////
     // Reception side of the NIC (END)
@@ -650,14 +600,7 @@ module my_top (
         .trn_tbuf_av(trn_tbuf_av_c),                              // I [4/3:0]
 
         // To rx_tlp_trigger  //
-        .rx_trigger_tlp(rx_trigger_tlp_synch),                    // I
-        .rx_trigger_tlp_ack(rx_trigger_tlp_ack),                  // O
-        .rx_change_huge_page(rx_change_huge_page_synch),          // I
-        .rx_change_huge_page_ack(rx_change_huge_page_ack),        // O
-        .rx_send_last_tlp(rx_send_last_tlp_synch),                // I
-        .rx_qwords_to_send(rx_qwords_to_send_synch),              // I [4:0]
-        .rx_huge_page_status_1(rx_huge_page_status_1),            // O 
-        .rx_huge_page_status_2(rx_huge_page_status_2),            // O 
+        .rx_commited_wr_address(rx_commited_wr_address_synch),    // I [`BF:0]
 
         // To rx_mac_interface  //
         .rx_commited_rd_address(rx_commited_rd_address),          // O [`BF:0]

@@ -7,7 +7,12 @@
 module rx_tlp_trigger (
 
     input    clk,
-    input    reset_n,
+    input    trn_lnk_up_n,
+
+    output reg              cfg_interrupt_n,
+    input                   cfg_interrupt_rdy_n,
+    input                   interrupts_enabled,
+    input      [31:0]       interrupt_period,
 
     // Internal logic
     input      [`BF:0]      commited_wr_address,
@@ -21,6 +26,8 @@ module rx_tlp_trigger (
     input                   huge_page_status_2
     );
 
+    wire            reset_n;
+
     // localparam
     localparam s0  = 10'b0000000000;
     localparam s1  = 10'b0000000001;
@@ -33,6 +40,12 @@ module rx_tlp_trigger (
     localparam s8  = 10'b0010000000;
     localparam s9  = 10'b0100000000;
     localparam s10 = 10'b1000000000;
+
+    //-------------------------------------------------------
+    // Local interrupt-logic
+    //-------------------------------------------------------
+    reg     [9:0]        interrupt_fsm;
+    reg     [31:0]       interrupt_free_running;
 
     //-------------------------------------------------------
     // Local timeout-generation
@@ -57,6 +70,60 @@ module rx_tlp_trigger (
     reg     [4:0]        look_ahead_number_of_tlp_sent;
     reg     [4:0]        number_of_tlp_to_send;
 
+    assign reset_n = ~trn_lnk_up_n;
+
+    ////////////////////////////////////////////////
+    // interrupt-logic
+    ////////////////////////////////////////////////
+    always @( posedge clk or negedge reset_n ) begin
+        if (!reset_n ) begin  // reset
+            cfg_interrupt_n <= 1'b1;
+            interrupt_free_running <= 'b0;
+            interrupt_fsm <= s0;
+        end
+        else begin  // not reset
+
+            case (interrupt_fsm)
+
+                s0 : begin
+                    interrupt_free_running <= interrupt_free_running +1;
+                    if (interrupt_free_running == interrupt_period) begin
+                        interrupt_fsm <= s1;
+                    end
+                end
+
+                s1 : begin
+                    interrupt_free_running <= 'b0;
+                    if (!diff) begin
+                        interrupt_fsm <= s2;
+                    end
+                end
+
+                s2 : begin
+                    if (interrupts_enabled) begin
+                        cfg_interrupt_n <= 1'b0;
+                        interrupt_fsm <= s3;
+                    end
+                    else begin
+                        interrupt_fsm <= s0;
+                    end
+                end
+
+                s3 : begin
+                    if (!cfg_interrupt_rdy_n) begin
+                        cfg_interrupt_n <= 1'b1;
+                        interrupt_fsm <= s0;
+                    end
+                end
+
+                default : begin
+                    interrupt_fsm <= s0;
+                end
+
+            endcase
+        end     // not reset
+    end  //always
+
     ////////////////////////////////////////////////
     // timeout logic
     ////////////////////////////////////////////////
@@ -71,11 +138,11 @@ module rx_tlp_trigger (
             if (trigger_fsm == s0) begin
                 free_running <= free_running +1;
                 timeout <= 1'b0;
-                if (free_running == 'hA000) begin
+                if (free_running == 'h10000) begin
                     timeout <= 1'b1;
                 end
                 else if (huge_page_status_1 && huge_page_status_2) begin
-                    if (free_running == 'h10) begin
+                    if (free_running == 'h20) begin
                         timeout <= 1'b1;
                     end
                 end
