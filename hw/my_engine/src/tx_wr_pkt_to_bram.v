@@ -697,6 +697,7 @@ module tx_wr_pkt_to_bram (
             completion_received <= 1'b0;
             commited_wr_addr <= 'b0;
             this_tlp_tag <= 'b0;
+            target_tlp <= 'b0;
             completed_requests <= 'b0;
             wr_to_bram_fsm <= s0;
         end
