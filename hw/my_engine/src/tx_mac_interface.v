@@ -220,14 +220,8 @@ module tx_mac_interface (
                 s1 : begin
                     rd_addr_sof <= rd_addr_prev0;
                     rd_addr_i <= rd_addr_i +1;
-                    if (!take_your_chances) begin       // abort
-                        rd_addr_i <= rd_addr_prev0;
-                        tx_frame_fsm <= s0;
-                    end
-                    else begin
-                        tx_start <= 1'b1;
-                        tx_frame_fsm <= s2;
-                    end
+                    tx_start <= 1'b1;
+                    tx_frame_fsm <= s2;
                 end
 
                 s2 : begin
