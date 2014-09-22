@@ -74,11 +74,11 @@ module rx_tlp_trigger (
                 if (free_running == 'hA000) begin
                     timeout <= 1'b1;
                 end
-                else if (huge_page_status_1 && huge_page_status_2) begin
-                    if (free_running == 'h10) begin
-                        timeout <= 1'b1;
-                    end
-                end
+                //else if (huge_page_status_1 && huge_page_status_2) begin
+                //    if (free_running == 'h10) begin
+                //        timeout <= 1'b1;
+                //    end
+                //end
             end
             else begin
                 timeout <= 1'b0;
