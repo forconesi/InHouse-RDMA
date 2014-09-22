@@ -88,9 +88,9 @@ module tx_mac_interface (
         else begin  // not reset
 
             take_your_chances <= 1'b0;
-            if (diff >= 'h10) begin
-                take_your_chances <= 1'b1;
-            end
+            //if (diff >= 'h10) begin
+            //    take_your_chances <= 1'b1;
+            //end
             
             diff <= commited_wr_addr + (~rd_addr_i) +1;
             
@@ -99,7 +99,7 @@ module tx_mac_interface (
                 s0 : begin
                     byte_counter <= rd_data[63:32];
                     if (diff) begin
-                        qwords_in_eth <= rd_data[44:35];
+                        //qwords_in_eth <= rd_data[44:35];
                         trigger_frame_fsm <= s1;
                     end
                 end
@@ -108,7 +108,13 @@ module tx_mac_interface (
                     if (byte_counter[2:0]) begin
                         qwords_in_eth <= byte_counter[12:3] +1;
                     end
+                    else begin
+                        qwords_in_eth <= byte_counter[12:3];
+                    end
+                    trigger_frame_fsm <= s2;
+                end
 
+                s2 : begin
                     case (byte_counter[2:0])                    // my deco
                         3'b000 : begin
                             last_tx_data_valid <= 8'b11111111;
@@ -136,21 +142,18 @@ module tx_mac_interface (
                         end
                     endcase
 
-                    if (!diff) begin
-                        trigger_frame_fsm <= s0;
-                    end
-                    else if (diff > qwords_in_eth) begin
+                    if (diff > qwords_in_eth) begin
                         trigger_tx_frame <= 1'b1;
-                        trigger_frame_fsm <= s2;
+                        trigger_frame_fsm <= s3;
                     end
                 end
 
-                s2 : begin
+                s3 : begin
                     trigger_tx_frame <= 1'b0;
-                    byte_counter <= rd_data[63:32];
+                    //byte_counter <= rd_data[63:32];
                     if (synch) begin
-                        qwords_in_eth <= rd_data[44:35];
-                        trigger_frame_fsm <= s1;
+                        //qwords_in_eth <= rd_data[44:35];
+                        trigger_frame_fsm <= s0;
                     end
                 end
 
