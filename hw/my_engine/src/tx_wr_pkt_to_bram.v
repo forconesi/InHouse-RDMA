@@ -162,26 +162,22 @@ module tx_wr_pkt_to_bram (
     reg     [8:0]   qwords_on_tlp;
     reg     [9:0]   dwords_on_tlp;
     reg             completion_received;
-    reg             completion_received_reg;
-    reg             receiving_clp;
     reg     [31:0]  dw_aux;
     reg     [9:0]   look_ahead_wr_addr;
     reg     [3:0]   this_tlp_tag;
-    reg     [3:0]   receiving_tlp_tag;
     reg     [9:0]   tlp_addr[0:3];
     reg     [9:0]   received_size[0:3];
     reg     [3:0]   target_tlp;
+    reg     [3:0]   next_target_tlp;
     reg     [9:0]   look_ahead_received_size;
     reg     [9:0]   look_ahead_tlp_addr;
     reg     [2:0]   completed_requests;
+    reg     [2:0]   look_ahead_completed_requests;
     reg             this_tlp_odd;
     reg     [3:0]   saved_dw_en;
     reg     [31:0]  saved_dw[0:3];
     reg     [9:0]   look_ahead_wr_addr_p1;
-    reg     [9:0]   aux_commit;
-    reg             p1;
     reg     [3:0]   data_ready;
-    (* KEEP = "TRUE" *)reg             temp;
 
     assign reset_n = ~trn_lnk_up_n;
 
@@ -704,12 +700,9 @@ module tx_wr_pkt_to_bram (
         if (!reset_n ) begin  // reset
             wr_addr <= 'b0;
             look_ahead_wr_addr <= 'b0;
-            wr_en <= 1'b0;
+            wr_en <= 1'b1;
             completion_received <= 1'b0;
-            receiving_clp <= 1'b0;
             commited_wr_addr <= 'b0;
-            aux_commit <= 'b0;
-            temp <= 1'b0;
             this_tlp_tag <= 'b0;
             target_tlp <= 'b0;
             completed_requests <= 'b0;
@@ -720,58 +713,39 @@ module tx_wr_pkt_to_bram (
         
         else begin  // not reset
 
-            wr_en <= 1'b0;
+            wr_en <= 1'b1;
             completion_received <= 1'b0;
-            receiving_clp <= 1'b0;
-            temp <= 1'b0;
 
             if (read_chunk && read_chunk_ack) begin
                 tlp_addr[tlp_tag] <= request_addr_bram;
                 received_size[tlp_tag] <= 'b0;
                 saved_dw_en[tlp_tag] <= 1'b0;
             end
-
-            if ((received_size[target_tlp] == request_size[target_tlp]) && data_ready[target_tlp]) begin
-                target_tlp <= target_tlp + 1;
-                completed_requests <= completed_requests + 1;
-                data_ready[target_tlp] <= 1'b0;
-            end
-
+            
+            next_target_tlp <= target_tlp +1;
+            look_ahead_completed_requests <= completed_requests +1;
             case (commit_wr_addr_fsm)                           // provided that tlps of one single request are received in order
+
                 s0 : begin
-                    commited_wr_addr <= aux_commit;
-                    receiving_tlp_tag <= this_tlp_tag;
-                    if (receiving_clp) begin
+                    if (data_ready[target_tlp]) begin
+                        commited_wr_addr <= tlp_addr[target_tlp];
+                    end
+                    if ((received_size[target_tlp] == request_size[target_tlp]) && data_ready[target_tlp]) begin
                         commit_wr_addr_fsm <= s1;
                     end
                 end
 
                 s1 : begin
-                    completion_received_reg <= completion_received;
-                    if (target_tlp == receiving_tlp_tag) begin
-                        commit_wr_addr_fsm <= s2;
-                    end
-                    else begin
-                        temp <= 1'b1;
-                        commit_wr_addr_fsm <= s0;
-                    end
-                end
-
-                s2 : begin
-                    if (completion_received_reg || completion_received) begin
-                        if (p1) begin
-                            aux_commit <= look_ahead_wr_addr_p1;
-                        end
-                        else begin
-                            aux_commit <= look_ahead_wr_addr;
-                        end
-                        commit_wr_addr_fsm <= s0;
-                    end
+                    target_tlp <= next_target_tlp;
+                    completed_requests <= look_ahead_completed_requests;
+                    data_ready[target_tlp] <= 1'b0;
+                    commit_wr_addr_fsm <= s0;
                 end
 
                 default : begin //other TLPs
                     commit_wr_addr_fsm <= s0;
                 end
+
             endcase
 
             case (wr_to_bram_fsm)
@@ -788,7 +762,6 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s1 : begin
-                    receiving_clp <= 1'b1;
                     look_ahead_received_size <= received_size[trn_rd[43:40]] + qwords_on_tlp;
                     look_ahead_tlp_addr <= tlp_addr[trn_rd[43:40]] + qwords_on_tlp;
                     this_tlp_tag <= trn_rd[43:40];
@@ -800,10 +773,6 @@ module tx_wr_pkt_to_bram (
 
                     wr_addr <= tlp_addr[trn_rd[43:40]];
                     wr_data <= {trn_rd[7:0], trn_rd[15:8], trn_rd[23:16], trn_rd[31:24], saved_dw[trn_rd[43:40]]};
-                    // borrar wr_en de aqui
-                    if (saved_dw_en[trn_rd[43:40]]) begin
-                        wr_en <= 1'b1;
-                    end
 
                     dw_aux <= trn_rd[31:0];
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
@@ -829,8 +798,6 @@ module tx_wr_pkt_to_bram (
                     received_size[this_tlp_tag] <= look_ahead_received_size;
                     saved_dw_en[this_tlp_tag] <= 1'b0;
 
-                    p1 <= 1'b0;
-                    wr_en <= 1'b1;
                     wr_addr <= look_ahead_wr_addr;
                     wr_data <= {trn_rd[39:32], trn_rd[47:40], trn_rd[55:48], trn_rd[63:56], dw_aux[7:0], dw_aux[15:8], dw_aux[23:16], dw_aux[31:24]};
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
@@ -851,8 +818,6 @@ module tx_wr_pkt_to_bram (
                     saved_dw[this_tlp_tag] <= {trn_rd[7:0], trn_rd[15:8], trn_rd[23:16], trn_rd[31:24]};
                     saved_dw_en[this_tlp_tag] <= 1'b1;
 
-                    p1 <= 1'b0;
-                    wr_en <= 1'b1;
                     wr_addr <= look_ahead_wr_addr;
                     wr_data <= {trn_rd[39:32], trn_rd[47:40], trn_rd[55:48], trn_rd[63:56], dw_aux[7:0], dw_aux[15:8], dw_aux[23:16], dw_aux[31:24]};
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
@@ -873,9 +838,6 @@ module tx_wr_pkt_to_bram (
                     saved_dw[this_tlp_tag] <= {trn_rd[39:32], trn_rd[47:40], trn_rd[55:48], trn_rd[63:56]};
                     saved_dw_en[this_tlp_tag] <= 1'b1;
 
-                    p1 <= 1'b0;
-                    look_ahead_wr_addr <= look_ahead_wr_addr_p1;
-                    wr_en <= 1'b1;
                     wr_addr <= look_ahead_wr_addr_p1;
                     wr_data <= {trn_rd[7:0], trn_rd[15:8], trn_rd[23:16], trn_rd[31:24], trn_rd[39:32], trn_rd[47:40], trn_rd[55:48], trn_rd[63:56]};
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
@@ -893,8 +855,6 @@ module tx_wr_pkt_to_bram (
                     received_size[this_tlp_tag] <= look_ahead_received_size + 1;
                     saved_dw_en[this_tlp_tag] <= 1'b0;
 
-                    p1 <= 1'b1;
-                    wr_en <= 1'b1;
                     wr_addr <= look_ahead_wr_addr_p1;
                     wr_data <= {trn_rd[7:0], trn_rd[15:8], trn_rd[23:16], trn_rd[31:24], trn_rd[39:32], trn_rd[47:40], trn_rd[55:48], trn_rd[63:56]};
                     if ( (!trn_rsrc_rdy_n) && (!trn_rdst_rdy_n)) begin
