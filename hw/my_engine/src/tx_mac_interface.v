@@ -61,6 +61,7 @@ module tx_mac_interface (
     reg     [9:0]     rd_addr_prev0;
     reg     [63:0]    rd_data_aux;
     reg               end_of_eth_frame;
+    reg               i_take_my_chances;
     ////////////////////////////////////////////////
     // INSTRUMENTATION
     ////////////////////////////////////////////////
@@ -136,7 +137,10 @@ module tx_mac_interface (
                         end
                     endcase
 
-                    if (diff > qwords_in_eth) begin
+                    if (i_take_my_chances) begin
+                        trigger_frame_fsm <= s2;
+                    end
+                    else if (diff > qwords_in_eth) begin
                         trigger_tx_frame <= 1'b1;
                         trigger_frame_fsm <= s2;
                     end
@@ -176,6 +180,7 @@ module tx_mac_interface (
             synch <= 1'b0;
             end_of_eth_frame <= 1'b0;
             commited_rd_addr <= 'b0;
+            i_take_my_chances <= 1'b0;
             `ifdef INSTRUMENTATION
             frames_sent <= 'b0;
             `endif
@@ -225,6 +230,7 @@ module tx_mac_interface (
                 end
 
                 s2 : begin
+                    i_take_my_chances <= 1'b0;
                     tx_data <= rd_data;
                     tx_data_valid <= 'hFF;
                     rd_addr_i <= rd_addr_i +1;
@@ -262,6 +268,7 @@ module tx_mac_interface (
                             tx_frame_fsm <= s0;
                         end
                         else begin
+                            i_take_my_chances <= 1'b1;
                             tx_frame_fsm <= s1;
                         end
                     end
