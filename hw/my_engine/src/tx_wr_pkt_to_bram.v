@@ -314,7 +314,7 @@ module tx_wr_pkt_to_bram (
 
                 s2 : begin
                     look_ahead_sent_requests <= sent_requests + 1;
-                    if (remaining_qwords > 'h200) begin
+                    if (remaining_qwords > 'h10) begin
                         trigger_rd_tlp_fsm <= s3;
                     end
                     else begin
@@ -323,32 +323,7 @@ module tx_wr_pkt_to_bram (
                 end
 
                 s3 : begin
-                    if (!diff) begin
-                        qwords_to_rd_i <= 'h200;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_2k[9]) begin
-                        qwords_to_rd_i <= 'h100;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_1k[9]) begin
-                        qwords_to_rd_i <= 'h080;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_512[9]) begin
-                        qwords_to_rd_i <= 'h040;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_256[9]) begin
-                        qwords_to_rd_i <= 'h020;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_128[9]) begin
+                    if (!aux_diff_128[9]) begin
                         qwords_to_rd_i <= 'h010;
                         read_chunk <= 1'b1;
                         trigger_rd_tlp_fsm <= s5;
@@ -358,31 +333,6 @@ module tx_wr_pkt_to_bram (
                 s4 : begin
                     if (!aux_diff0[9]) begin
                         qwords_to_rd_i <= remaining_qwords;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_2k[9]) begin
-                        qwords_to_rd_i <= 'h100;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_1k[9]) begin
-                        qwords_to_rd_i <= 'h080;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_512[9]) begin
-                        qwords_to_rd_i <= 'h040;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_256[9]) begin
-                        qwords_to_rd_i <= 'h020;
-                        read_chunk <= 1'b1;
-                        trigger_rd_tlp_fsm <= s5;
-                    end
-                    else if (!aux_diff_128[9]) begin
-                        qwords_to_rd_i <= 'h010;
                         read_chunk <= 1'b1;
                         trigger_rd_tlp_fsm <= s5;
                     end
