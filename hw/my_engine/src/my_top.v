@@ -266,6 +266,7 @@ module my_top (
     // Local Wires tx_mac_interface
     //-------------------------------------------------------
     wire   [9:0]                                      tx_commited_rd_addr;
+    wire   [9:0]                                      tmp;
 
     //-------------------------------------------------------
     // Local Wires tx_rd_addr_synch
@@ -595,6 +596,7 @@ module my_top (
         .tx_ack(mac_tx_ack),                                   // I
         .rd_addr(tx_rd_addr),                                  // O [8:0]
         .rd_data(tx_rd_data),                                  // I [63:0]
+        .tmp(tmp),
         .commited_rd_addr(tx_commited_rd_addr),                // O [9:0]
         .commited_wr_addr(tx_commited_wr_addr_synch)           // I [9:0]
         );
@@ -607,6 +609,7 @@ module my_top (
         .reset_n_clk_out(reset_n_pcie_domain),                 // I
         .clk_in(clk156_25),                                    // I
         .reset_n_clk_in(reset_n),                              // I
+        .tmp(tmp),
         .commited_rd_addr_in(tx_commited_rd_addr),             // I [9:0]
         .commited_rd_addr_out(tx_commited_rd_addr_synch)       // O [9:0]
         );

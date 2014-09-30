@@ -12,6 +12,8 @@ module tx_rd_addr_synch (
     input    clk_in,
     input    reset_n_clk_in,
 
+    input [9:0] tmp,
+
     input         [9:0]     commited_rd_addr_in,
     output reg    [9:0]     commited_rd_addr_out
     );
@@ -41,6 +43,10 @@ module tx_rd_addr_synch (
     reg              synch_reg0;
     reg              synch_reg1;
     reg     [9:0]  cross_reg0;
+
+    (* KEEP = "TRUE" *)reg     [9:0]  qword_sync;
+    reg     [9:0]  tmp0;
+    reg     [9:0]  tmp1;
 
     ////////////////////////////////////////////////
     // a
@@ -97,6 +103,9 @@ module tx_rd_addr_synch (
             commited_rd_addr_out <= 'b0;
             synch_reg0 <= 1'b0;
             synch_reg1 <= 1'b0;
+            tmp0 <= 'b0;
+            tmp1 <= 'b0;
+            qword_sync <= 'b0;
         end
         
         else begin  // not reset
@@ -107,6 +116,12 @@ module tx_rd_addr_synch (
 
             if (synch_reg1) begin
                 commited_rd_addr_out <= cross_reg0;
+            end
+
+            tmp0 <= tmp;
+            tmp1 <= tmp0;
+            if (tmp0 == tmp1) begin
+                qword_sync <= tmp1;
             end
 
         end     // not reset
