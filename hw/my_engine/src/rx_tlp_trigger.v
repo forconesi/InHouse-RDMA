@@ -71,7 +71,7 @@ module rx_tlp_trigger (
             if (trigger_fsm == s0) begin
                 free_running <= free_running +1;
                 timeout <= 1'b0;
-                if (free_running == 'hA000) begin
+                if (free_running == 'h5000) begin
                     timeout <= 1'b1;
                 end
                 //else if (huge_page_status_1 && huge_page_status_2) begin
