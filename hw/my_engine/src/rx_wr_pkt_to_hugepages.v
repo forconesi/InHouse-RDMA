@@ -208,6 +208,10 @@ module rx_wr_pkt_to_hugepages (
             case (send_fsm)
 
                 s0 : begin
+                    driving_interface <= 1'b0;
+                    trn_td <= 64'b0;
+                    trn_trem_n <= 8'hFF;
+
                     host_mem_addr <= current_huge_page_addr + 'h80;
                     huge_page_qword_counter <= 'b0;
                     if (huge_page_available) begin
